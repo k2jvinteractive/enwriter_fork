@@ -1,0 +1,267 @@
+// The rich-text editor and its ribbon. Uses the browser's built-in editing
+// engine (contenteditable), which keeps typing instant.
+(() => {
+  'use strict';
+  const $ = (s, r = document) => r.querySelector(s);
+  const emw = window.emw;
+  const editor = $('#editor');
+  const page = $('#page');
+  const ribbon = $('#ribbon');
+  const blockSel = $('#rb-block');
+  const fontSel = $('#rb-font');
+  const sizeSel = $('#rb-size');
+  const spacingSel = $('#rb-spacing');
+  const colorIn = $('#rb-color');
+  const hiliteIn = $('#rb-hilite');
+
+  let savedRange = null;   // last selection inside the editor (survives focus moving to the ribbon)
+  let pendingSize = null;  // font size chosen while the caret was collapsed
+  let rafId = 0;
+
+  document.execCommand('defaultParagraphSeparator', false, 'p');
+
+  // ---- helpers -------------------------------------------------------------
+  const inEditor = () => {
+    const s = getSelection();
+    return s.rangeCount > 0 && editor.contains(s.anchorNode);
+  };
+
+  function restore() {
+    if (document.activeElement === editor && inEditor()) return;
+    editor.focus();
+    if (savedRange) {
+      const s = getSelection();
+      s.removeAllRanges();
+      s.addRange(savedRange);
+    }
+  }
+
+  const CSS_CMDS = new Set(['foreColor', 'hiliteColor', 'fontName', 'fontSize',
+    'justifyLeft', 'justifyCenter', 'justifyRight', 'justifyFull']);
+
+  function exec(cmd, value = null) {
+    restore();
+    document.execCommand('styleWithCSS', false, CSS_CMDS.has(cmd));
+    document.execCommand(cmd, false, value);
+    refreshState();
+  }
+
+  const BLOCKS = 'p,h1,h2,h3,li,div';
+  function selectedBlocks() {
+    const sel = getSelection();
+    if (!sel.rangeCount) return [];
+    const range = sel.getRangeAt(0);
+    return [...editor.querySelectorAll(BLOCKS)].filter(
+      (el) => range.intersectsNode(el) && !el.querySelector(BLOCKS)
+    );
+  }
+
+  const fireInput = () => editor.dispatchEvent(new Event('input', { bubbles: true }));
+
+  const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  function safeUrl(raw) {
+    const u = (raw || '').trim();
+    if (!u || u.startsWith('#')) return '';
+    if (/^(https?:|mailto:)/i.test(u)) return u;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(u)) return '';   // blocks javascript:, data:, file:
+    return 'https://' + u.replace(/^\/+/, '');
+  }
+
+  // ---- ribbon state --------------------------------------------------------
+  const stateButtons = [...ribbon.querySelectorAll('[data-state]')];
+  const BLOCK_VALUES = ['p', 'h1', 'h2', 'h3', 'blockquote'];
+
+  function refreshState() {
+    if (!inEditor()) return;
+    for (const b of stateButtons) {
+      let on = false;
+      try { on = document.queryCommandState(b.dataset.cmd); } catch { /* ignore */ }
+      b.setAttribute('aria-pressed', String(on));
+    }
+    const block = (document.queryCommandValue('formatBlock') || '').toLowerCase().replace(/[<>]/g, '');
+    blockSel.value = BLOCK_VALUES.includes(block) ? block : 'p';
+
+    const anchor = getSelection().anchorNode;
+    const el = anchor && (anchor.nodeType === 1 ? anchor : anchor.parentElement);
+    if (el) {
+      const cs = getComputedStyle(el);
+      sizeSel.value = String(Math.round(parseFloat(cs.fontSize)));
+      const family = cs.fontFamily.split(',')[0].replace(/["']/g, '').trim().toLowerCase();
+      const match = [...fontSel.options].find((o) => o.value.toLowerCase() === family);
+      fontSel.value = match ? match.value : '';
+      const blk = el.closest(BLOCKS);
+      const lh = blk && blk.style.lineHeight ? blk.style.lineHeight : '1.75';
+      spacingSel.value = [...spacingSel.options].some((o) => o.value === lh) ? lh : '1.75';
+    }
+  }
+
+  document.addEventListener('selectionchange', () => {
+    if (!inEditor()) return;
+    savedRange = getSelection().getRangeAt(0).cloneRange();
+    if (!rafId && !ribbon.hidden) {
+      rafId = requestAnimationFrame(() => { rafId = 0; refreshState(); });
+    }
+  });
+
+  // ---- ribbon actions ------------------------------------------------------
+  // Buttons must not steal focus from the editor, or the selection is lost.
+  ribbon.addEventListener('mousedown', (e) => { if (e.target.closest('button')) e.preventDefault(); });
+
+  ribbon.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-cmd]');
+    if (!b) return;
+    const cmd = b.dataset.cmd;
+    if (cmd === 'clear') clearFormatting();
+    else if (cmd === 'link') addLink();
+    else exec(cmd);
+  });
+
+  blockSel.addEventListener('change', () => exec('formatBlock', `<${blockSel.value}>`));
+  fontSel.addEventListener('change', () => exec('fontName', fontSel.value));
+  sizeSel.addEventListener('change', () => applyFontSize(Number(sizeSel.value)));
+  spacingSel.addEventListener('change', () => {
+    restore();
+    selectedBlocks().forEach((b) => { b.style.lineHeight = spacingSel.value === '1.75' ? '' : spacingSel.value; });
+    fireInput();
+  });
+
+  for (const [input, swatch, cmd] of [[colorIn, '#sw-color', 'foreColor'], [hiliteIn, '#sw-hilite', 'hiliteColor']]) {
+    const sw = $(swatch);
+    sw.style.setProperty('--c', input.value);
+    input.addEventListener('input', () => sw.style.setProperty('--c', input.value));
+    input.addEventListener('change', () => exec(cmd, input.value));
+  }
+
+  function applyFontSize(px) {
+    restore();
+    document.execCommand('styleWithCSS', false, true);
+    document.execCommand('fontSize', false, '7');   // marker size, replaced with the real one below
+    if (getSelection().isCollapsed) pendingSize = px;
+    fixFontSizes(px);
+    refreshState();
+  }
+
+  function fixFontSizes(px) {
+    editor.querySelectorAll('font[size="7"], span[style*="xxx-large"]').forEach((el) => {
+      if (el.tagName === 'FONT') {
+        const span = document.createElement('span');
+        while (el.firstChild) span.appendChild(el.firstChild);
+        el.replaceWith(span);
+        el = span;
+      }
+      el.style.fontSize = px + 'px';
+    });
+  }
+
+  function clearFormatting() {
+    restore();
+    document.execCommand('styleWithCSS', false, false);
+    document.execCommand('removeFormat');
+    document.execCommand('formatBlock', false, '<p>');
+    selectedBlocks().forEach((b) => b.removeAttribute('style'));
+    fireInput();
+    refreshState();
+  }
+
+  async function addLink() {
+    const url = await emw.ask({ message: 'Link address', input: 'https://', okLabel: 'Add link' });
+    const href = safeUrl(url === 'https://' ? '' : url);
+    if (!href) return;
+    restore();
+    if (savedRange && !savedRange.collapsed) exec('createLink', href);
+    else exec('insertHTML', `<a href="${escapeHtml(href)}">${escapeHtml(href)}</a>`);
+  }
+
+  // ---- typing behaviour ----------------------------------------------------
+  const updateEmpty = () => {
+    editor.classList.toggle('empty', !editor.textContent && !editor.querySelector('hr') && editor.children.length <= 1);
+  };
+
+  editor.addEventListener('input', () => {
+    if (pendingSize) { fixFontSizes(pendingSize); pendingSize = null; }
+    updateEmpty();
+  });
+
+  editor.addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab' || e.ctrlKey || e.metaKey || e.altKey) return;
+    e.preventDefault();
+    const inList = getSelection().anchorNode?.parentElement?.closest('li');
+    if (inList) document.execCommand(e.shiftKey ? 'outdent' : 'indent');
+    else if (!e.shiftKey) document.execCommand('insertText', false, '\t');
+  });
+
+  // ---- paste: keep simple formatting, drop everything else -------------------
+  const KEEP = new Set(['P', 'BR', 'H1', 'H2', 'H3', 'BLOCKQUOTE', 'UL', 'OL', 'LI', 'B', 'I', 'U', 'S', 'SUB', 'SUP', 'A']);
+  const BLOCK = new Set(['P', 'H1', 'H2', 'H3', 'BLOCKQUOTE', 'LI']);
+  const RENAME = { STRONG: 'B', EM: 'I', STRIKE: 'S', DEL: 'S', DIV: 'P', SECTION: 'P', ARTICLE: 'P', H4: 'H3', H5: 'H3', H6: 'H3' };
+  const DROP = new Set(['SCRIPT', 'STYLE', 'META', 'TITLE', 'HEAD', 'LINK', 'NOSCRIPT', 'IFRAME', 'OBJECT', 'EMBED',
+    'SVG', 'IMG', 'VIDEO', 'AUDIO', 'CANVAS', 'FORM', 'INPUT', 'BUTTON', 'SELECT', 'TEXTAREA']);
+
+  function cleanInto(node, parent) {
+    if (node.nodeType === Node.TEXT_NODE) { parent.append(node.nodeValue.replace(/\u00a0/g, ' ')); return; }
+    if (node.nodeType !== Node.ELEMENT_NODE || DROP.has(node.tagName)) return;
+    const tag = RENAME[node.tagName] || node.tagName;
+    const st = node.style;
+    let holder = parent;
+    if (KEEP.has(tag)) {
+      if (tag === 'A') {
+        const href = safeUrl(node.getAttribute('href'));
+        if (href) { const a = document.createElement('a'); a.setAttribute('href', href); parent.append(a); holder = a; }
+      } else {
+        const el = document.createElement(tag.toLowerCase());
+        if (st && BLOCK.has(tag) && /^(left|center|right|justify)$/.test(st.textAlign)) el.style.textAlign = st.textAlign;
+        parent.append(el);
+        holder = el;
+      }
+    }
+    if (st) {
+      const deco = st.textDecorationLine || st.textDecoration || '';
+      const wraps = [];
+      if (/^(bold|[6-9]00)$/.test(st.fontWeight) && tag !== 'B') wraps.push('b');
+      if (st.fontStyle === 'italic' && tag !== 'I') wraps.push('i');
+      if (deco.includes('underline') && tag !== 'U') wraps.push('u');
+      if (deco.includes('line-through') && tag !== 'S') wraps.push('s');
+      for (const w of wraps) { const el = document.createElement(w); holder.append(el); holder = el; }
+    }
+    for (const child of node.childNodes) cleanInto(child, holder);
+  }
+
+  function sanitize(html) {
+    const body = new DOMParser().parseFromString(html, 'text/html').body;
+    const out = document.createElement('div');
+    for (const child of body.childNodes) cleanInto(child, out);
+    return out.textContent.trim() || out.querySelector('br') ? out.innerHTML : '';
+  }
+
+  editor.addEventListener('paste', (e) => {
+    e.preventDefault();
+    const html = e.clipboardData.getData('text/html');
+    const clean = html ? sanitize(html) : '';
+    document.execCommand('styleWithCSS', false, false);
+    if (clean) document.execCommand('insertHTML', false, clean);
+    else document.execCommand('insertText', false, e.clipboardData.getData('text/plain'));
+  });
+
+  // ---- menu actions --------------------------------------------------------
+  emw.actions.undo = () => { editor.focus(); document.execCommand('undo'); };
+  emw.actions.redo = () => { editor.focus(); document.execCommand('redo'); };
+  emw.actions.selectAll = () => { editor.focus(); document.execCommand('selectAll'); };
+
+  // ---- API for app.js ------------------------------------------------------
+  emw.editor = {
+    onChange: (cb) => editor.addEventListener('input', cb),
+    html: () => editor.innerHTML,
+    text: () => editor.innerText,
+    focus: () => editor.focus(),
+    load(html) {
+      editor.contentEditable = 'false';
+      editor.innerHTML = html || '<p><br></p>';
+      editor.contentEditable = 'true';
+      savedRange = null;
+      pendingSize = null;
+      page.scrollTop = 0;
+      updateEmpty();
+    }
+  };
+})();

@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "—Writer",
   "main": "src/main.js",
-  "author": "Your Name",
+  "author": "Stixhi Stishi",
   "license": "MIT",
   "scripts": {
     "start": "electron .",

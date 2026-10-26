@@ -2,29 +2,185 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'">
+  <!-- 'unsafe-inline' for styles only: the editor stores inline text formatting (colors, sizes). Scripts stay locked to this app. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Novel Writer</title>
+  <title>emwriter</title>
   <link rel="stylesheet" href="styles.css">
+  <script src="ui.js" defer></script>
+  <script src="editor.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
-  <aside class="sidebar">
-    <input id="novel-title" class="novel-title" aria-label="Novel title" spellcheck="false">
-    <ol id="chapters" class="chapters"></ol>
-    <div class="sidebar-actions">
-      <button id="add" type="button">New chapter</button>
-      <button id="remove" type="button" class="quiet">Delete chapter</button>
+  <svg class="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-undo" viewBox="0 0 16 16"><path d="M5 3L2.5 5.5 5 8M2.5 5.5h7a3.5 3.5 0 010 7H6"/></symbol>
+    <symbol id="i-redo" viewBox="0 0 16 16"><path d="M11 3l2.5 2.5L11 8M13.5 5.5h-7a3.5 3.5 0 000 7H10"/></symbol>
+    <symbol id="i-left" viewBox="0 0 16 16"><path d="M2 3.5h12M2 6.8h7.5M2 10.2h12M2 13.5h7.5"/></symbol>
+    <symbol id="i-center" viewBox="0 0 16 16"><path d="M2 3.5h12M4.25 6.8h7.5M2 10.2h12M4.25 13.5h7.5"/></symbol>
+    <symbol id="i-right" viewBox="0 0 16 16"><path d="M2 3.5h12M6.5 6.8H14M2 10.2h12M6.5 13.5H14"/></symbol>
+    <symbol id="i-justify" viewBox="0 0 16 16"><path d="M2 3.5h12M2 6.8h12M2 10.2h12M2 13.5h12"/></symbol>
+    <symbol id="i-ul" viewBox="0 0 16 16"><path d="M6 4h8M6 8h8M6 12h8"/><circle cx="2.8" cy="4" r="1" fill="currentColor" stroke="none"/><circle cx="2.8" cy="8" r="1" fill="currentColor" stroke="none"/><circle cx="2.8" cy="12" r="1" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-ol" viewBox="0 0 16 16"><path d="M6.5 4h7.5M6.5 8h7.5M6.5 12h7.5"/><text x="1.2" y="5.7" font-size="5" fill="currentColor" stroke="none">1</text><text x="1.2" y="9.7" font-size="5" fill="currentColor" stroke="none">2</text><text x="1.2" y="13.7" font-size="5" fill="currentColor" stroke="none">3</text></symbol>
+    <symbol id="i-indent" viewBox="0 0 16 16"><path d="M2 3h12M7 6.5h7M7 9.5h7M2 13h12"/><path d="M2 6l3 2-3 2z" fill="currentColor"/></symbol>
+    <symbol id="i-outdent" viewBox="0 0 16 16"><path d="M2 3h12M7 6.5h7M7 9.5h7M2 13h12"/><path d="M5 6L2 8l3 2z" fill="currentColor"/></symbol>
+    <symbol id="i-link" viewBox="0 0 16 16"><path d="M6.8 9.2a2.6 2.6 0 003.7 0l2-2a2.6 2.6 0 00-3.7-3.7l-.7.7M9.2 6.8a2.6 2.6 0 00-3.7 0l-2 2a2.6 2.6 0 003.7 3.7l.7-.7"/></symbol>
+    <symbol id="i-hr" viewBox="0 0 16 16"><path d="M2 8h12"/><path d="M5 4.5h6M5 11.5h6" opacity=".45"/></symbol>
+    <symbol id="i-clear" viewBox="0 0 16 16"><path d="M4 4h8M8 4v4.5M3 13l10-9"/></symbol>
+    <symbol id="i-textcolor" viewBox="0 0 16 16"><path d="M4 11.5L8 3l4 8.5M5.4 8.8h5.2"/></symbol>
+    <symbol id="i-highlight" viewBox="0 0 16 16"><path d="M3 10.5l5.5-5.5 3 3L6 13.5H3.5zM9.5 4l1.5-1.5 3 3L12.5 7"/></symbol>
+    <symbol id="i-panel-left" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6 3v10"/></symbol>
+    <symbol id="i-panel-right" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M10 3v10"/></symbol>
+    <symbol id="i-ribbon" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M2 6.5h12"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+  </svg>
+
+  <header class="menubar">
+    <nav id="menus" class="menus" aria-label="Menu"></nav>
+    <div class="toggles">
+      <button class="icon-btn" type="button" data-toggle="hierarchy" title="Show or hide chapters (Alt+1)" aria-pressed="true"><svg class="ic"><use href="#i-panel-left"/></svg></button>
+      <button class="icon-btn" type="button" data-toggle="ribbon" title="Show or hide ribbon (Alt+2)" aria-pressed="true"><svg class="ic"><use href="#i-ribbon"/></svg></button>
+      <button class="icon-btn" type="button" data-toggle="inspector" title="Show or hide inspector (Alt+3)" aria-pressed="true"><svg class="ic"><use href="#i-panel-right"/></svg></button>
     </div>
-  </aside>
-  <main class="pane">
-    <input id="title" class="chapter-title" aria-label="Chapter title" spellcheck="false">
-    <textarea id="editor" aria-label="Chapter text" placeholder="Start writing…"></textarea>
-    <footer class="status">
-      <span id="chapter-words">0 words</span>
-      <span id="total-words">0 words in novel</span>
-      <span id="save-state">Saved</span>
-    </footer>
-  </main>
+  </header>
+
+  <div id="view-manuscript" class="workspace">
+    <aside id="hierarchy" class="panel left">
+      <div class="panel-head">
+        <input id="novel-title" class="novel-title" aria-label="Novel title" spellcheck="false">
+        <button id="add" class="icon-btn" type="button" title="New chapter (Ctrl+N)"><svg class="ic"><use href="#i-plus"/></svg></button>
+      </div>
+      <ol id="chapters" class="chapters" aria-label="Chapters"></ol>
+    </aside>
+
+    <div class="gutter"></div>
+
+    <section class="center">
+      <div id="ribbon" class="ribbon">
+        <div class="ribbon-row">
+          <div class="group">
+            <button class="rb" type="button" data-cmd="undo" title="Undo"><svg class="ic"><use href="#i-undo"/></svg></button>
+            <button class="rb" type="button" data-cmd="redo" title="Redo"><svg class="ic"><use href="#i-redo"/></svg></button>
+          </div>
+          <div class="group">
+            <select id="rb-block" title="Paragraph style" aria-label="Paragraph style">
+              <option value="p">Paragraph</option>
+              <option value="h1">Heading 1</option>
+              <option value="h2">Heading 2</option>
+              <option value="h3">Heading 3</option>
+              <option value="blockquote">Block quote</option>
+            </select>
+            <select id="rb-font" title="Font" aria-label="Font">
+              <option>Georgia</option>
+              <option>Palatino Linotype</option>
+              <option>Garamond</option>
+              <option>Times New Roman</option>
+              <option>Arial</option>
+              <option>Helvetica</option>
+              <option>Verdana</option>
+              <option>Courier New</option>
+            </select>
+            <select id="rb-size" title="Font size" aria-label="Font size">
+              <option>10</option><option>11</option><option>12</option><option>14</option>
+              <option>16</option><option selected>18</option><option>20</option><option>22</option>
+              <option>24</option><option>28</option><option>32</option><option>36</option>
+              <option>48</option><option>72</option>
+            </select>
+          </div>
+          <div class="group">
+            <button class="rb" type="button" data-cmd="bold" data-state title="Bold (Ctrl+B)"><b>B</b></button>
+            <button class="rb" type="button" data-cmd="italic" data-state title="Italic (Ctrl+I)"><i>I</i></button>
+            <button class="rb" type="button" data-cmd="underline" data-state title="Underline (Ctrl+U)"><u>U</u></button>
+            <button class="rb" type="button" data-cmd="strikeThrough" data-state title="Strikethrough"><s>S</s></button>
+            <button class="rb" type="button" data-cmd="subscript" data-state title="Subscript">x<sub>2</sub></button>
+            <button class="rb" type="button" data-cmd="superscript" data-state title="Superscript">x<sup>2</sup></button>
+          </div>
+          <div class="group">
+            <label class="rb color" title="Text color"><svg class="ic"><use href="#i-textcolor"/></svg><span class="swatch" id="sw-color"></span><input type="color" id="rb-color" value="#e6e6e6" aria-label="Text color"></label>
+            <label class="rb color" title="Highlight color"><svg class="ic"><use href="#i-highlight"/></svg><span class="swatch" id="sw-hilite"></span><input type="color" id="rb-hilite" value="#e0b84a" aria-label="Highlight color"></label>
+            <button class="rb" type="button" data-cmd="clear" title="Clear formatting"><svg class="ic"><use href="#i-clear"/></svg></button>
+          </div>
+        </div>
+        <div class="ribbon-row">
+          <div class="group">
+            <button class="rb" type="button" data-cmd="justifyLeft" data-state title="Align left"><svg class="ic"><use href="#i-left"/></svg></button>
+            <button class="rb" type="button" data-cmd="justifyCenter" data-state title="Center"><svg class="ic"><use href="#i-center"/></svg></button>
+            <button class="rb" type="button" data-cmd="justifyRight" data-state title="Align right"><svg class="ic"><use href="#i-right"/></svg></button>
+            <button class="rb" type="button" data-cmd="justifyFull" data-state title="Justify"><svg class="ic"><use href="#i-justify"/></svg></button>
+          </div>
+          <div class="group">
+            <select id="rb-spacing" title="Line spacing" aria-label="Line spacing">
+              <option value="1">1.0</option><option value="1.15">1.15</option><option value="1.5">1.5</option>
+              <option value="1.75" selected>1.75</option><option value="2">2.0</option><option value="2.5">2.5</option>
+            </select>
+          </div>
+          <div class="group">
+            <button class="rb" type="button" data-cmd="insertUnorderedList" data-state title="Bulleted list"><svg class="ic"><use href="#i-ul"/></svg></button>
+            <button class="rb" type="button" data-cmd="insertOrderedList" data-state title="Numbered list"><svg class="ic"><use href="#i-ol"/></svg></button>
+            <button class="rb" type="button" data-cmd="outdent" title="Decrease indent"><svg class="ic"><use href="#i-outdent"/></svg></button>
+            <button class="rb" type="button" data-cmd="indent" title="Increase indent"><svg class="ic"><use href="#i-indent"/></svg></button>
+          </div>
+          <div class="group">
+            <button class="rb" type="button" data-cmd="link" title="Insert link"><svg class="ic"><use href="#i-link"/></svg></button>
+            <button class="rb" type="button" data-cmd="insertHorizontalRule" title="Scene break"><svg class="ic"><use href="#i-hr"/></svg></button>
+          </div>
+        </div>
+      </div>
+      <div id="page" class="page">
+        <div id="editor" class="editor empty" contenteditable="true" spellcheck="true" role="textbox" aria-multiline="true" aria-label="Chapter text"></div>
+      </div>
+    </section>
+
+    <div class="gutter"></div>
+
+    <aside id="inspector" class="panel right">
+      <div class="field">
+        <label for="ch-title">Title</label>
+        <input id="ch-title" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="ch-synopsis">Synopsis</label>
+        <textarea id="ch-synopsis" rows="7"></textarea>
+      </div>
+      <dl class="facts">
+        <dt>Words</dt><dd id="in-words">0</dd>
+        <dt>Characters</dt><dd id="in-chars">0</dd>
+        <dt>Reading time</dt><dd id="in-read">–</dd>
+      </dl>
+    </aside>
+  </div>
+
+  <section id="blank" class="blank" hidden>
+    <h1 id="blank-title"></h1>
+    <p>Nothing here yet.</p>
+  </section>
+
+  <footer class="tabbar">
+    <div class="tabbar-left"><button class="tab" type="button" data-view="home">Home</button></div>
+    <nav class="tabs" aria-label="Sections">
+      <button class="tab" type="button" data-view="places">Places</button>
+      <button class="tab" type="button" data-view="characters">Characters</button>
+      <button class="tab" type="button" data-view="timeline">Timeline</button>
+      <button class="tab" type="button" data-view="manuscript" aria-current="true">Manuscript</button>
+      <button class="tab" type="button" data-view="darlings">Darlings</button>
+      <button class="tab" type="button" data-view="notes">Notes</button>
+      <button class="tab" type="button" data-view="tags">Tags</button>
+    </nav>
+    <div id="stats" class="stats">
+      <span id="st-words">0 words</span>
+      <span id="st-save" class="save">Saved</span>
+      <span id="st-total" class="total">0 words in manuscript</span>
+    </div>
+  </footer>
+
+  <dialog id="dialog">
+    <form id="dialog-form" method="dialog">
+      <p id="dialog-message"></p>
+      <input id="dialog-input" type="text" autocomplete="off" spellcheck="false">
+      <div class="dialog-actions">
+        <button id="dialog-cancel" type="button" class="quiet">Cancel</button>
+        <button id="dialog-ok" type="submit" value="ok">OK</button>
+      </div>
+    </form>
+  </dialog>
 </body>
 </html>

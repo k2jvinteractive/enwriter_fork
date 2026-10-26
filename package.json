@@ -1,8 +1,8 @@
 {
-  "name": "novel-writer",
-  "productName": "Novel Writer",
+  "name": "emWriter",
+  "productName": "emWriter",
   "version": "0.1.0",
-  "description": "A fast, distraction-free novel writing app",
+  "description": "—Writer",
   "main": "src/main.js",
   "author": "Your Name",
   "license": "MIT",
@@ -12,8 +12,8 @@
     "dist": "electron-builder"
   },
   "build": {
-    "appId": "com.example.novelwriter",
-    "productName": "Novel Writer",
+    "appId": "com.example.emwriter",
+    "productName": "emWriter",
     "files": [
       "src/**/*"
     ],

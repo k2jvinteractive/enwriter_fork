@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Novel Writer</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <input id="novel-title" class="novel-title" aria-label="Novel title" spellcheck="false">
+    <ol id="chapters" class="chapters"></ol>
+    <div class="sidebar-actions">
+      <button id="add" type="button">New chapter</button>
+      <button id="remove" type="button" class="quiet">Delete chapter</button>
+    </div>
+  </aside>
+  <main class="pane">
+    <input id="title" class="chapter-title" aria-label="Chapter title" spellcheck="false">
+    <textarea id="editor" aria-label="Chapter text" placeholder="Start writing…"></textarea>
+    <footer class="status">
+      <span id="chapter-words">0 words</span>
+      <span id="total-words">0 words in novel</span>
+      <span id="save-state">Saved</span>
+    </footer>
+  </main>
+</body>
+</html>

@@ -1,13 +1,15 @@
-// Menu bar, panel toggles, bottom tabs and the shared dialog.
+// Menu bar, auto-hiding panels, bottom tabs, and shared widgets
+// (dialog, context menu, toast, inline rename).
 (() => {
   'use strict';
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 
-  // Shared namespace for the three scripts.
-  const emw = (window.emw = { actions: {}, view: () => currentView });
+  const emw = (window.emw = { actions: {}, view: () => currentView, viewListeners: [] });
+  emw.onView = (cb) => emw.viewListeners.push(cb);
+  emw.isTextField = (el) => !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
 
-  // ---- Dialog (Electron has no prompt/confirm that behaves well) ----------
+  // ---- Prompt dialog (Electron's prompt/confirm misbehave) ------------------
   const dlg = $('#dialog');
   const msg = $('#dialog-message');
   const input = $('#dialog-input');
@@ -28,7 +30,6 @@
       dlg.showModal();
       if (wantsInput) { input.focus(); input.select(); }
     });
-
   $('#dialog-cancel').addEventListener('click', () => dlg.close('cancel'));
   dlg.addEventListener('close', () => {
     const ok = dlg.returnValue === 'ok';
@@ -36,26 +37,107 @@
     resolver = null;
   });
 
-  // ---- Menu bar ------------------------------------------------------------
+  // ---- Toast with optional action (used for "Undo") ---------------------------
+  const toastEl = $('#toast');
+  let toastTimer = 0;
+  emw.toast = (message, { action, ms = 5000 } = {}) => {
+    const text = document.createElement('span');
+    text.textContent = message;
+    toastEl.replaceChildren(text);
+    if (action) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = action.label;
+      b.addEventListener('click', () => { toastEl.hidden = true; action.run(); });
+      toastEl.append(b);
+    }
+    toastEl.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toastEl.hidden = true; }, ms);
+  };
+
+  // ---- Context menu ------------------------------------------------------------
+  let ctx = null;
+  const closeCtx = () => { if (ctx) { ctx.remove(); ctx = null; } };
+  emw.menu = (x, y, items) => {
+    closeCtx();
+    ctx = document.createElement('div');
+    ctx.className = 'menu-list ctx';
+    ctx.setAttribute('role', 'menu');
+    for (const it of items) {
+      if (!it) { const s = document.createElement('div'); s.className = 'menu-sep'; ctx.append(s); continue; }
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'menu-item' + (it.danger ? ' danger-item' : '');
+      b.disabled = !!it.disabled;
+      b.setAttribute('role', 'menuitem');
+      b.textContent = it.label;
+      b.addEventListener('click', () => { closeCtx(); it.run(); });
+      ctx.append(b);
+    }
+    document.body.append(ctx);
+    const r = ctx.getBoundingClientRect();
+    ctx.style.left = Math.max(4, Math.min(x, innerWidth - r.width - 8)) + 'px';
+    ctx.style.top = Math.max(4, Math.min(y, innerHeight - r.height - 8)) + 'px';
+    ctx.querySelector('button:not(:disabled)')?.focus();
+  };
+  document.addEventListener('mousedown', (e) => { if (ctx && !ctx.contains(e.target)) closeCtx(); }, true);
+  window.addEventListener('blur', closeCtx);
+  document.addEventListener('scroll', closeCtx, true);
+
+  // ---- Inline rename: swaps an element for a text box --------------------------
+  emw.rename = (target, { value, placeholder = '', onCommit, onDone }) => {
+    const host = target.closest('[draggable="true"]');
+    if (host) host.draggable = false;   // otherwise the mouse can't select text in the box
+    const box = document.createElement('input');
+    box.className = 'rename';
+    box.value = value;
+    box.placeholder = placeholder;
+    box.maxLength = 120;
+    box.spellcheck = false;
+    target.replaceWith(box);
+    box.focus();
+    box.select();
+    let finished = false;
+    const finish = (ok) => {
+      if (finished) return;
+      finished = true;
+      if (host) host.draggable = true;
+      if (ok) onCommit(box.value.trim());
+      if (onDone) onDone();
+    };
+    box.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+      e.stopPropagation();
+    });
+    box.addEventListener('blur', () => finish(true));
+  };
+
+  // ---- Menu bar -----------------------------------------------------------------
   const isMac = /Mac/.test(navigator.platform);
   const keyLabel = (k) => (isMac ? k.replace('Ctrl', '⌘').replace('Alt', '⌥') : k);
   const MENUS = [
     ['File', [
       ['New chapter', 'Ctrl+N', 'newChapter'],
+      ['New scene', 'Ctrl+Shift+N', 'newScene'],
       ['Save', 'Ctrl+S', 'save'],
       null,
-      ['Delete chapter', '', 'deleteChapter']
+      ['Delete current chapter or scene', '', 'deleteCurrent']
     ]],
     ['Edit', [
       ['Undo', 'Ctrl+Z', 'undo'],
       ['Redo', 'Ctrl+Shift+Z', 'redo'],
       null,
+      ['Undo chapter or scene change', 'Ctrl+Alt+Z', 'undoStructure'],
+      ['Redo chapter or scene change', 'Ctrl+Alt+Shift+Z', 'redoStructure'],
+      null,
       ['Select all', 'Ctrl+A', 'selectAll']
     ]],
     ['View', [
-      ['Chapters', 'Alt+1', 'toggleHierarchy'],
-      ['Ribbon', 'Alt+2', 'toggleRibbon'],
-      ['Inspector', 'Alt+3', 'toggleInspector']
+      ['Pin chapters panel', 'Alt+1', 'toggleHierarchy'],
+      ['Show ribbon', 'Alt+2', 'toggleRibbon'],
+      ['Pin inspector', 'Alt+3', 'toggleInspector']
     ]]
   ];
 
@@ -72,12 +154,7 @@
     list.className = 'menu-list';
     list.setAttribute('role', 'menu');
     for (const item of items) {
-      if (!item) {
-        const sep = document.createElement('div');
-        sep.className = 'menu-sep';
-        list.append(sep);
-        continue;
-      }
+      if (!item) { const s = document.createElement('div'); s.className = 'menu-sep'; list.append(s); continue; }
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'menu-item';
@@ -116,31 +193,72 @@
     }
   });
   document.addEventListener('mousedown', (e) => { if (!e.target.closest('.menu')) closeMenus(); });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenus(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeMenus(); closeCtx(); } });
   window.addEventListener('blur', closeMenus);
 
-  // ---- Panel toggles (remembered between launches) -------------------------
-  const KEY = 'emwriter.ui';
-  let ui = { hierarchy: true, ribbon: true, inspector: true };
-  try { Object.assign(ui, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch { /* first run */ }
+  // ---- Panels: auto-hide by default, pin to keep them open ------------------------
+  const KEY = 'emwriter.ui2';
+  const ui = { ribbon: true, pin: { hierarchy: false, inspector: false } };
+  try {
+    const saved = JSON.parse(localStorage.getItem(KEY) || '{}');
+    if (typeof saved.ribbon === 'boolean') ui.ribbon = saved.ribbon;
+    Object.assign(ui.pin, saved.pin || {});
+  } catch { /* first run */ }
 
-  const panels = { hierarchy: $('#hierarchy'), ribbon: $('#ribbon'), inspector: $('#inspector') };
+  const SIDES = ['hierarchy', 'inspector'];
+  const panels = { hierarchy: $('#hierarchy'), inspector: $('#inspector') };
+  const edges = { hierarchy: $('#edge-left'), inspector: $('#edge-right') };
+  const closeTimers = {};
+
+  const setOpen = (name, open) => panels[name].classList.toggle('open', open);
+  function scheduleClose(name) {
+    if (ui.pin[name]) return;
+    clearTimeout(closeTimers[name]);
+    closeTimers[name] = setTimeout(() => {
+      const p = panels[name];
+      if (p.matches(':hover') || (p.contains(document.activeElement) && emw.isTextField(document.activeElement))) return;
+      setOpen(name, false);
+    }, 300);
+  }
+  emw.peek = (name) => { clearTimeout(closeTimers[name]); if (!ui.pin[name]) setOpen(name, true); };
+
   function applyPanels() {
-    for (const name of Object.keys(panels)) panels[name].hidden = !ui[name];
-    $$('[data-toggle]').forEach((b) => b.setAttribute('aria-pressed', String(ui[b.dataset.toggle])));
+    for (const name of SIDES) {
+      panels[name].classList.toggle('float', !ui.pin[name]);
+      panels[name].classList.remove('open');
+      edges[name].hidden = ui.pin[name];
+    }
+    $('#ribbon').hidden = !ui.ribbon;
+    $$('[data-toggle]').forEach((b) => {
+      const n = b.dataset.toggle;
+      b.setAttribute('aria-pressed', String(n === 'ribbon' ? ui.ribbon : ui.pin[n]));
+    });
   }
+  function persist() { try { localStorage.setItem(KEY, JSON.stringify(ui)); } catch { /* ignore */ } }
   function toggle(name) {
-    ui[name] = !ui[name];
+    if (name === 'ribbon') ui.ribbon = !ui.ribbon; else ui.pin[name] = !ui.pin[name];
     applyPanels();
-    try { localStorage.setItem(KEY, JSON.stringify(ui)); } catch { /* ignore */ }
+    persist();
   }
+  for (const name of SIDES) {
+    edges[name].addEventListener('mouseenter', () => emw.peek(name));
+    panels[name].addEventListener('mouseenter', () => clearTimeout(closeTimers[name]));
+    panels[name].addEventListener('mouseleave', () => scheduleClose(name));
+    panels[name].addEventListener('focusout', () => scheduleClose(name));
+  }
+  document.addEventListener('mousedown', (e) => {
+    for (const name of SIDES) {
+      if (!ui.pin[name] && panels[name].classList.contains('open') &&
+          !panels[name].contains(e.target) && !edges[name].contains(e.target)) setOpen(name, false);
+    }
+  });
   emw.actions.toggleHierarchy = () => toggle('hierarchy');
   emw.actions.toggleRibbon = () => toggle('ribbon');
   emw.actions.toggleInspector = () => toggle('inspector');
   $$('[data-toggle]').forEach((b) => b.addEventListener('click', () => toggle(b.dataset.toggle)));
   applyPanels();
 
-  // ---- Bottom tabs ---------------------------------------------------------
+  // ---- Bottom tabs -----------------------------------------------------------------
   const TITLES = {
     home: 'Home', places: 'Places', characters: 'Characters', timeline: 'Timeline',
     manuscript: 'Manuscript', darlings: 'Darlings', notes: 'Notes', tags: 'Tags'
@@ -150,14 +268,17 @@
 
   function showView(name) {
     currentView = name;
-    const manuscript = name === 'manuscript';
-    $('#view-manuscript').hidden = !manuscript;
-    $('#blank').hidden = manuscript;
-    $('#stats').hidden = !manuscript;
+    const built = name === 'manuscript' || name === 'timeline';
+    $('#view-manuscript').hidden = name !== 'manuscript';
+    $('#view-timeline').hidden = name !== 'timeline';
+    $('#blank').hidden = built;
+    $('#stats').hidden = !built;
     $('#blank-title').textContent = TITLES[name];
     tabs.forEach((t) => t.setAttribute('aria-current', String(t.dataset.view === name)));
-    if (manuscript) emw.editor?.focus();
+    emw.viewListeners.forEach((cb) => cb(name));
+    if (name === 'manuscript') emw.editor?.focus();
   }
+  emw.showView = showView;
   tabs.forEach((t) => t.addEventListener('click', () => showView(t.dataset.view)));
   showView('manuscript');
 })();

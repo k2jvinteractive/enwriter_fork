@@ -8,7 +8,10 @@
   <title>emwriter</title>
   <link rel="stylesheet" href="styles.css">
   <script src="ui.js" defer></script>
+  <script src="store.js" defer></script>
   <script src="editor.js" defer></script>
+  <script src="scene-dialog.js" defer></script>
+  <script src="timeline.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -37,13 +40,15 @@
   <header class="menubar">
     <nav id="menus" class="menus" aria-label="Menu"></nav>
     <div class="toggles">
-      <button class="icon-btn" type="button" data-toggle="hierarchy" title="Show or hide chapters (Alt+1)" aria-pressed="true"><svg class="ic"><use href="#i-panel-left"/></svg></button>
+      <button class="icon-btn" type="button" data-toggle="hierarchy" title="Pin chapters panel open (Alt+1)" aria-pressed="true"><svg class="ic"><use href="#i-panel-left"/></svg></button>
       <button class="icon-btn" type="button" data-toggle="ribbon" title="Show or hide ribbon (Alt+2)" aria-pressed="true"><svg class="ic"><use href="#i-ribbon"/></svg></button>
-      <button class="icon-btn" type="button" data-toggle="inspector" title="Show or hide inspector (Alt+3)" aria-pressed="true"><svg class="ic"><use href="#i-panel-right"/></svg></button>
+      <button class="icon-btn" type="button" data-toggle="inspector" title="Pin inspector open (Alt+3)" aria-pressed="true"><svg class="ic"><use href="#i-panel-right"/></svg></button>
     </div>
   </header>
 
   <div id="view-manuscript" class="workspace">
+    <div id="edge-left" class="edge left" aria-hidden="true"></div>
+    <div id="edge-right" class="edge right" aria-hidden="true"></div>
     <aside id="hierarchy" class="panel left">
       <div class="panel-head">
         <input id="novel-title" class="novel-title" aria-label="Novel title" spellcheck="false">
@@ -136,9 +141,10 @@
       <div class="field">
         <label for="ch-title">Title</label>
         <input id="ch-title" spellcheck="false">
+        <p id="in-context" class="hint"></p>
       </div>
       <div class="field">
-        <label for="ch-synopsis">Synopsis</label>
+        <label for="ch-synopsis" id="ch-synopsis-label">Synopsis</label>
         <textarea id="ch-synopsis" rows="7"></textarea>
       </div>
       <dl class="facts">
@@ -148,6 +154,19 @@
       </dl>
     </aside>
   </div>
+
+  <section id="view-timeline" class="timeline" hidden>
+    <div class="tl-toolbar">
+      <h1>Timeline</h1>
+      <button id="tl-undo" class="tool-btn" type="button" title="Undo (Ctrl+Z)" disabled><svg class="ic"><use href="#i-undo"/></svg></button>
+      <button id="tl-redo" class="tool-btn" type="button" title="Redo (Ctrl+Shift+Z)" disabled><svg class="ic"><use href="#i-redo"/></svg></button>
+      <input id="tl-search" type="search" placeholder="Search scenes…" aria-label="Search scenes" spellcheck="false">
+      <span class="spacer"></span>
+      <span id="tl-summary" class="muted"></span>
+      <button id="tl-size" class="tool-btn" type="button" aria-pressed="false" title="Smaller cards">Compact</button>
+    </div>
+    <div id="tl-scroll" class="tl-scroll"><div id="tl-grid" class="tl-grid"></div></div>
+  </section>
 
   <section id="blank" class="blank" hidden>
     <h1 id="blank-title"></h1>
@@ -181,6 +200,44 @@
         <button id="dialog-ok" type="submit" value="ok">OK</button>
       </div>
     </form>
+  </dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <dialog id="scene-dialog" class="big" aria-label="Scene details">
+    <div class="sd-body">
+      <aside class="sd-side">
+        <label>Plotline <select id="sd-plotline"></select></label>
+        <label>Chapter <select id="sd-chapter"></select></label>
+        <label>Status
+          <select id="sd-status">
+            <option value="idea">Idea</option><option value="draft">Draft</option>
+            <option value="revised">Revised</option><option value="done">Done</option>
+          </select>
+        </label>
+        <div class="chips-field" data-field="characters"><span class="lbl">Characters</span><div class="chips"></div><input list="dl-characters" placeholder="Add and press Enter" aria-label="Add character"></div>
+        <div class="chips-field" data-field="places"><span class="lbl">Places</span><div class="chips"></div><input list="dl-places" placeholder="Add and press Enter" aria-label="Add place"></div>
+        <div class="chips-field" data-field="tags"><span class="lbl">Tags</span><div class="chips"></div><input list="dl-tags" placeholder="Add and press Enter" aria-label="Add tag"></div>
+        <div class="color-field">
+          <span class="lbl">Colour</span>
+          <div class="color-row"><input type="color" id="sd-color" aria-label="Scene colour"><button id="sd-color-reset" class="quiet" type="button">Use plotline colour</button></div>
+        </div>
+      </aside>
+      <section class="sd-main">
+        <input id="sd-title" class="sd-title" placeholder="Scene title" spellcheck="true" aria-label="Scene title">
+        <div class="sd-tabs" role="tablist">
+          <button type="button" role="tab" data-tab="description" aria-selected="true">Description</button>
+          <button type="button" role="tab" data-tab="notes" aria-selected="false">Notes</button>
+        </div>
+        <textarea id="sd-description" aria-label="Description" placeholder="What happens in this scene?"></textarea>
+        <textarea id="sd-notes" aria-label="Notes" placeholder="Private notes for this scene" hidden></textarea>
+        <div id="sd-words" class="sd-words"></div>
+      </section>
+    </div>
+    <footer class="sd-foot">
+      <div><button id="sd-delete" class="danger-btn" type="button">Delete</button> <button id="sd-duplicate" type="button">Duplicate</button></div>
+      <div><button id="sd-open" type="button">Open in manuscript</button> <button id="sd-close" class="primary" type="button">Close</button></div>
+    </footer>
+    <datalist id="dl-characters"></datalist><datalist id="dl-places"></datalist><datalist id="dl-tags"></datalist>
   </dialog>
 </body>
 </html>

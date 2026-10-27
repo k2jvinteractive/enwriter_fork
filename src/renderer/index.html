@@ -3,16 +3,20 @@
 <head>
   <meta charset="UTF-8">
   <!-- 'unsafe-inline' for styles only: the editor stores inline text formatting (colors, sizes). Scripts stay locked to this app. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>emwriter</title>
   <link rel="stylesheet" href="styles.css">
   <script src="ui.js" defer></script>
   <script src="store.js" defer></script>
+  <script src="fonts.js" defer></script>
   <script src="editor.js" defer></script>
+  <script src="widgets.js" defer></script>
   <script src="scene-dialog.js" defer></script>
   <script src="timeline.js" defer></script>
+  <script src="entity-view.js" defer></script>
   <script src="app.js" defer></script>
+  <script src="inspector.js" defer></script>
 </head>
 <body>
   <svg class="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -35,6 +39,10 @@
     <symbol id="i-panel-right" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M10 3v10"/></symbol>
     <symbol id="i-ribbon" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M2 6.5h12"/></symbol>
     <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+    <symbol id="i-dropcap" viewBox="0 0 16 16"><path d="M2.5 12.5L5.2 4l2.7 8.5M3.4 9.7h3.6"/><path d="M10 5h4M10 8h4M2 14.5h12" opacity=".7"/></symbol>
+    <symbol id="i-typewriter" viewBox="0 0 16 16"><path d="M2 8h12" stroke-width="2.2"/><path d="M3 4h10M3 12h10" opacity=".4"/></symbol>
+    <symbol id="i-image" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="6" cy="6.8" r="1" fill="currentColor" stroke="none"/><path d="M2.5 12l3.5-3.5 2.5 2.5 2-2 3 3"/></symbol>
+    <symbol id="i-quote" viewBox="0 0 16 16"><path d="M3 11V8a3 3 0 013-3M9 11V8a3 3 0 013-3"/><path d="M3 11h3V8H3zM9 11h3V8H9z" fill="currentColor"/></symbol>
   </svg>
 
   <header class="menubar">
@@ -74,16 +82,7 @@
               <option value="h3">Heading 3</option>
               <option value="blockquote">Block quote</option>
             </select>
-            <select id="rb-font" title="Font" aria-label="Font">
-              <option>Georgia</option>
-              <option>Palatino Linotype</option>
-              <option>Garamond</option>
-              <option>Times New Roman</option>
-              <option>Arial</option>
-              <option>Helvetica</option>
-              <option>Verdana</option>
-              <option>Courier New</option>
-            </select>
+            <div class="fontpick"><button id="rb-font" class="fp-btn" type="button" title="Font" aria-haspopup="listbox"><span class="fp-label">Georgia</span></button></div>
             <select id="rb-size" title="Font size" aria-label="Font size">
               <option>10</option><option>11</option><option>12</option><option>14</option>
               <option>16</option><option selected>18</option><option>20</option><option>22</option>
@@ -129,6 +128,21 @@
             <button class="rb" type="button" data-cmd="insertHorizontalRule" title="Scene break"><svg class="ic"><use href="#i-hr"/></svg></button>
           </div>
         </div>
+        <div class="ribbon-row">
+          <div class="group">
+            <button class="rb" id="rb-dropcap" type="button" aria-pressed="false" title="Drop cap on the first paragraph of this chapter"><svg class="ic"><use href="#i-dropcap"/></svg></button>
+            <div class="fontpick"><button id="rb-dc-font" class="fp-btn" type="button" title="Drop cap font" aria-haspopup="listbox" disabled><span class="fp-label">Same as text</span></button></div>
+            <label class="rb-field" title="Height of the drop cap in lines of text">Lines
+              <select id="rb-dc-lines" disabled><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option></select></label>
+            <label class="rb-field" title="Space between the drop cap and the letters next to it, in pixels">Gap
+              <input type="number" id="rb-dc-gap" min="0" max="40" step="1" value="8" disabled></label>
+            <label class="rb color" title="Drop cap colour"><svg class="ic"><use href="#i-textcolor"/></svg><span class="swatch" id="sw-dc"></span><input type="color" id="rb-dc-color" value="#e8caa4" disabled aria-label="Drop cap colour"></label>
+            <button class="rb txt" id="rb-dc-reset" type="button" title="Reset drop cap settings" disabled>Reset</button>
+          </div>
+          <div class="group">
+            <button class="rb" id="rb-typewriter" type="button" aria-pressed="false" title="Typewriter mode: keeps the line you are writing near the middle"><svg class="ic"><use href="#i-typewriter"/></svg></button>
+          </div>
+        </div>
       </div>
       <div id="page" class="page">
         <div id="editor" class="editor empty" contenteditable="true" spellcheck="true" role="textbox" aria-multiline="true" aria-label="Chapter text"></div>
@@ -138,22 +152,44 @@
     <div class="gutter"></div>
 
     <aside id="inspector" class="panel right">
-      <div class="field">
-        <label for="ch-title">Title</label>
-        <input id="ch-title" spellcheck="false">
-        <p id="in-context" class="hint"></p>
-      </div>
-      <div class="field">
-        <label for="ch-synopsis" id="ch-synopsis-label">Synopsis</label>
-        <textarea id="ch-synopsis" rows="7"></textarea>
-      </div>
-      <dl class="facts">
-        <dt>Words</dt><dd id="in-words">0</dd>
-        <dt>Characters</dt><dd id="in-chars">0</dd>
-        <dt>Reading time</dt><dd id="in-read">–</dd>
-      </dl>
+      <section class="insp-sec" aria-labelledby="det-title">
+        <h3 id="det-title">Detected in this text</h3>
+        <div id="det-characters" class="det-group"></div>
+        <div id="det-places" class="det-group"></div>
+        <p id="det-hint" class="hint"></p>
+      </section>
+      <details class="insp-sec" id="insp-details" open>
+        <summary>Details</summary>
+        <div class="field">
+          <label for="ch-title">Title</label>
+          <input id="ch-title" spellcheck="false">
+          <p id="in-context" class="hint"></p>
+        </div>
+        <div class="field">
+          <label for="ch-synopsis" id="ch-synopsis-label">Synopsis</label>
+          <textarea id="ch-synopsis" rows="5"></textarea>
+        </div>
+        <dl class="facts">
+          <dt>Words</dt><dd id="in-words">0</dd>
+          <dt>Characters</dt><dd id="in-chars">0</dd>
+          <dt>Reading time</dt><dd id="in-read">–</dd>
+        </dl>
+      </details>
+      <section class="insp-tabs">
+        <div class="insp-tabbar" role="tablist">
+          <button type="button" role="tab" data-tab="notes" aria-selected="true">Notes</button>
+          <button type="button" role="tab" data-tab="darlings" aria-selected="false">Darlings</button>
+        </div>
+        <div id="insp-notes" class="insp-panel"></div>
+        <div id="insp-darlings" class="insp-panel" hidden><p class="hint">Darlings are coming soon.</p></div>
+      </section>
     </aside>
   </div>
+
+  <section id="view-characters" class="entview" hidden></section>
+  <section id="view-places" class="entview" hidden></section>
+  <section id="view-notes" class="entview" hidden></section>
+  <section id="view-tags" class="entview" hidden></section>
 
   <section id="view-timeline" class="timeline" hidden>
     <div class="tl-toolbar">
@@ -161,6 +197,7 @@
       <button id="tl-undo" class="tool-btn" type="button" title="Undo (Ctrl+Z)" disabled><svg class="ic"><use href="#i-undo"/></svg></button>
       <button id="tl-redo" class="tool-btn" type="button" title="Redo (Ctrl+Shift+Z)" disabled><svg class="ic"><use href="#i-redo"/></svg></button>
       <input id="tl-search" type="search" placeholder="Search scenes…" aria-label="Search scenes" spellcheck="false">
+      <select id="tl-filter" title="Show only scenes with a character, place or tag" aria-label="Filter scenes"></select>
       <span class="spacer"></span>
       <span id="tl-summary" class="muted"></span>
       <button id="tl-size" class="tool-btn" type="button" aria-pressed="false" title="Smaller cards">Compact</button>
@@ -214,9 +251,9 @@
             <option value="revised">Revised</option><option value="done">Done</option>
           </select>
         </label>
-        <div class="chips-field" data-field="characters"><span class="lbl">Characters</span><div class="chips"></div><input list="dl-characters" placeholder="Add and press Enter" aria-label="Add character"></div>
-        <div class="chips-field" data-field="places"><span class="lbl">Places</span><div class="chips"></div><input list="dl-places" placeholder="Add and press Enter" aria-label="Add place"></div>
-        <div class="chips-field" data-field="tags"><span class="lbl">Tags</span><div class="chips"></div><input list="dl-tags" placeholder="Add and press Enter" aria-label="Add tag"></div>
+        <div class="field-group"><span class="lbl">Characters</span><div id="sd-characters"></div></div>
+        <div class="field-group"><span class="lbl">Places</span><div id="sd-places"></div></div>
+        <div class="field-group"><span class="lbl">Tags</span><div id="sd-tags"></div></div>
         <div class="color-field">
           <span class="lbl">Colour</span>
           <div class="color-row"><input type="color" id="sd-color" aria-label="Scene colour"><button id="sd-color-reset" class="quiet" type="button">Use plotline colour</button></div>
@@ -229,7 +266,7 @@
           <button type="button" role="tab" data-tab="notes" aria-selected="false">Notes</button>
         </div>
         <textarea id="sd-description" aria-label="Description" placeholder="What happens in this scene?"></textarea>
-        <textarea id="sd-notes" aria-label="Notes" placeholder="Private notes for this scene" hidden></textarea>
+        <div id="sd-notes" class="sd-notes" hidden></div>
         <div id="sd-words" class="sd-words"></div>
       </section>
     </div>
@@ -237,7 +274,6 @@
       <div><button id="sd-delete" class="danger-btn" type="button">Delete</button> <button id="sd-duplicate" type="button">Duplicate</button></div>
       <div><button id="sd-open" type="button">Open in manuscript</button> <button id="sd-close" class="primary" type="button">Close</button></div>
     </footer>
-    <datalist id="dl-characters"></datalist><datalist id="dl-places"></datalist><datalist id="dl-tags"></datalist>
   </dialog>
 </body>
 </html>

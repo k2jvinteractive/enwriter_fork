@@ -7,6 +7,7 @@
 
   const emw = (window.emw = { actions: {}, view: () => currentView, viewListeners: [] });
   emw.onView = (cb) => emw.viewListeners.push(cb);
+  emw.flushHooks = [];   // functions that save pending work before the app closes
   emw.isTextField = (el) => !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
 
   // ---- Prompt dialog (Electron's prompt/confirm misbehave) ------------------
@@ -263,16 +264,16 @@
     home: 'Home', places: 'Places', characters: 'Characters', timeline: 'Timeline',
     manuscript: 'Manuscript', darlings: 'Darlings', notes: 'Notes', tags: 'Tags'
   };
+  const BUILT = ['manuscript', 'timeline', 'characters', 'places', 'notes', 'tags'];
   let currentView = 'manuscript';
   const tabs = $$('.tab[data-view]');
 
   function showView(name) {
     currentView = name;
-    const built = name === 'manuscript' || name === 'timeline';
-    $('#view-manuscript').hidden = name !== 'manuscript';
-    $('#view-timeline').hidden = name !== 'timeline';
+    const built = BUILT.includes(name);
+    for (const v of BUILT) $('#view-' + v).hidden = v !== name;
     $('#blank').hidden = built;
-    $('#stats').hidden = !built;
+    $('#stats').hidden = !(name === 'manuscript' || name === 'timeline');
     $('#blank-title').textContent = TITLES[name];
     tabs.forEach((t) => t.setAttribute('aria-current', String(t.dataset.view === name)));
     emw.viewListeners.forEach((cb) => cb(name));

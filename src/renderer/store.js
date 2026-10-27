@@ -1,18 +1,25 @@
-// The single source of truth for the novel's structure: plotlines, chapters
-// and scenes. The Manuscript panel and the Timeline both read and write here,
-// which is what keeps them in sync. Every change is undoable.
+// The single source of truth for the novel's structure and reference material:
+// plotlines, chapters, scenes, characters, places, notes and tags.
+// Every view reads and writes here, which keeps them in sync. Every change is undoable.
 (() => {
   'use strict';
   const emw = window.emw;
   const MAX_UNDO = 100;
   const COALESCE_MS = 1200;
   const STATUSES = { idea: 'Idea', draft: 'Draft', revised: 'Revised', done: 'Done' };
+  const KINDS = ['characters', 'places', 'notes', 'tags'];
+  const KIND_ONE = { characters: 'character', places: 'place', notes: 'note', tags: 'tag' };
+  const SCENE_FIELD = { characters: 'characters', places: 'places', notes: 'noteIds', tags: 'tags' };
+  const DEFAULT_CATEGORIES = {
+    characters: ['Main', 'Supporting', 'Other'], places: ['Main', 'Other'], notes: ['General'], tags: ['General']
+  };
 
   let data = null;
   let undoStack = [];
   let redoStack = [];
   let lastKey = null;
   let lastTime = 0;
+  let depth = 0;
   const listeners = [];
 
   const uid = () => Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('');
@@ -37,8 +44,8 @@
     const x = (v) => Math.round(255 * v).toString(16).padStart(2, '0');
     return '#' + x(f(0)) + x(f(8)) + x(f(4));
   }
-  function randomColor() {
-    const used = data.plotlines.map((p) => hexToHue(p.color));
+  function randomColor(usedHexes = []) {
+    const used = usedHexes.filter((h) => /^#[0-9a-f]{6}$/i.test(h)).map(hexToHue);
     let best = 0, bestDist = -1;
     for (let i = 0; i < 30; i++) {
       const h = Math.random() * 360;
@@ -49,11 +56,18 @@
   }
 
   // ---- shapes --------------------------------------------------------------
-  const blankChapter = (title = '') => ({ id: uid(), title, words: 0, synopsis: '', scenes: [] });
+  const dropcapDefaults = () => ({ on: false, font: '', lines: 3, gap: 8, color: '' });
+  const blankChapter = (title = '') => ({ id: uid(), title, words: 0, synopsis: '', scenes: [], dropcap: dropcapDefaults() });
   const blankScene = (plotline, title = '') => ({
-    id: uid(), title, plotline, words: 0, description: '', notes: '',
-    characters: [], places: [], tags: [], color: '', status: 'idea'
+    id: uid(), title, plotline, words: 0, description: '',
+    characters: [], places: [], tags: [], noteIds: [], color: '', status: 'idea'
   });
+  const entityDefaults = {
+    characters: () => ({ name: '', aliases: [], short: '', tags: [], attributes: [], hasThumb: false, category: '' }),
+    places: () => ({ name: '', aliases: [], short: '', tags: [], attributes: [], hasThumb: false, category: '' }),
+    notes: () => ({ name: '', preview: '', tags: [], category: '' }),
+    tags: () => ({ name: '', short: '', color: randomColor((data.tags || []).map((t) => t.color)), category: '' })
+  };
 
   function normalize() {
     data.title ??= 'Untitled Novel';
@@ -61,14 +75,56 @@
     if (!data.plotlines.length) data.plotlines.push({ id: uid(), name: 'Main Plot', color: '#e8caa4' });
     if (!Array.isArray(data.chapters)) data.chapters = [];
     if (!data.chapters.length) data.chapters.push(blankChapter());
+
+    data.categories = data.categories || {};
+    for (const kind of KINDS) {
+      if (!Array.isArray(data.categories[kind]) || !data.categories[kind].length) {
+        data.categories[kind] = DEFAULT_CATEGORIES[kind].map((name) => ({ id: uid(), name }));
+      }
+      if (!Array.isArray(data[kind])) data[kind] = [];
+    }
+    for (const kind of KINDS) {
+      const cats = new Set(data.categories[kind].map((c) => c.id));
+      data[kind] = data[kind].map((e) => Object.assign(entityDefaults[kind](), e));
+      for (const e of data[kind]) if (!cats.has(e.category)) e.category = '';
+    }
+
+    // Older saves kept names as text on scenes; turn them into real characters, places and tags.
+    const ensure = (kind, v) => {
+      if (data[kind].some((e) => e.id === v)) return v;
+      const found = data[kind].find((e) => e.name.toLowerCase() === String(v).toLowerCase());
+      if (found) return found.id;
+      const e = Object.assign(entityDefaults[kind](), { id: uid(), name: String(v), category: data.categories[kind][0].id });
+      data[kind].push(e);
+      return e.id;
+    };
+
     const first = data.plotlines[0].id;
     const known = new Set(data.plotlines.map((p) => p.id));
     for (const ch of data.chapters) {
-      ch.title = /^Chapter \d+$/.test(ch.title || '') ? '' : (ch.title || ''); // empty = auto-numbered
+      ch.title = /^Chapter \d+$/.test(ch.title || '') ? '' : (ch.title || '');
       ch.words ??= 0;
       ch.synopsis ??= '';
-      ch.scenes = (ch.scenes || []).map((s) =>
-        Object.assign(blankScene(first), s, known.has(s.plotline) ? {} : { plotline: first }));
+      ch.dropcap = Object.assign(dropcapDefaults(), ch.dropcap);
+      ch.scenes = (ch.scenes || []).map((raw) => {
+        const s = Object.assign(blankScene(first), raw, known.has(raw.plotline) ? {} : { plotline: first });
+        for (const kind of ['characters', 'places', 'tags']) {
+          s[kind] = [...new Set((Array.isArray(s[kind]) ? s[kind] : []).map((v) => ensure(kind, v)))];
+        }
+        s.noteIds = (Array.isArray(s.noteIds) ? s.noteIds : []).filter((id) => data.notes.some((n) => n.id === id));
+        if (typeof s.notes === 'string') {
+          if (s.notes.trim()) {
+            const note = Object.assign(entityDefaults.notes(), {
+              id: uid(), name: `${s.title || 'Scene'} notes`, preview: s.notes.slice(0, 120),
+              legacy: s.notes, category: data.categories.notes[0].id
+            });
+            data.notes.push(note);
+            s.noteIds.push(note.id);
+          }
+          delete s.notes;
+        }
+        return s;
+      });
     }
   }
 
@@ -95,14 +151,30 @@
     const f = findScene(id);
     return f ? { kind: 'scene', item: f.scene, chapter: f.chapter } : null;
   }
+  const entity = (kind, id) => data[kind].find((e) => e.id === id) || null;
   const chapterWords = (ch) => ch.words + ch.scenes.reduce((n, s) => n + s.words, 0);
   const totalWords = () => data.chapters.reduce((n, c) => n + chapterWords(c), 0);
+
+  // The drop cap belongs to the first paragraph of a chapter: the chapter's own text if it
+  // has any, otherwise the first scene that has text.
+  const dropcapOwner = (ch) => {
+    if (ch.words > 0 || !ch.scenes.length) return ch.id;
+    return (ch.scenes.find((s) => s.words > 0) || ch.scenes[0]).id;
+  };
+
+  // Scenes that reference a character, place, note or tag.
+  const scenesWith = (kind, id) => {
+    const f = SCENE_FIELD[kind];
+    const out = [];
+    for (const chapter of data.chapters) for (const scene of chapter.scenes) if (scene[f].includes(id)) out.push({ scene, chapter });
+    return out;
+  };
 
   // ---- undo machinery --------------------------------------------------------
   function record(before, label, opts) {
     const now = Date.now();
     if (opts.coalesce && opts.coalesce === lastKey && now - lastTime < COALESCE_MS && undoStack.length) {
-      lastTime = now; redoStack.length = 0; return;   // keep the earlier snapshot: one undo step for a burst of typing
+      lastTime = now; redoStack.length = 0; return;
     }
     undoStack.push({ json: before, label });
     if (undoStack.length > MAX_UNDO) undoStack.shift();
@@ -111,10 +183,14 @@
     lastTime = now;
   }
 
+  // Calls made inside another commit join it, so a compound action is one undo step.
   function commit(label, fn, opts = {}) {
+    if (depth > 0) return fn();
     const before = JSON.stringify(data);
-    const result = fn();
-    if (JSON.stringify(data) === before) return result;   // nothing changed: no undo step
+    let result;
+    depth++;
+    try { result = fn(); } finally { depth--; }
+    if (JSON.stringify(data) === before) return result;
     record(before, label, opts);
     emit({ label });
     return result;
@@ -225,7 +301,7 @@
 
   // ---- plotlines -------------------------------------------------------------
   const addPlotline = (name) => commit('add plotline', () => {
-    const p = { id: uid(), name: name || `Plotline ${data.plotlines.length + 1}`, color: randomColor() };
+    const p = { id: uid(), name: name || `Plotline ${data.plotlines.length + 1}`, color: randomColor(data.plotlines.map((x) => x.color)) };
     data.plotlines.push(p);
     return p.id;
   });
@@ -253,6 +329,70 @@
     data.plotlines.splice(clamp(pos, data.plotlines.length), 0, p);
   });
 
+  // ---- characters, places, notes, tags ----------------------------------------
+  const addEntity = (kind, init = {}) => commit(`add ${KIND_ONE[kind]}`, () => {
+    const e = Object.assign(entityDefaults[kind](), init, { id: uid() });
+    if (!data.categories[kind].some((c) => c.id === e.category)) e.category = data.categories[kind][0]?.id || '';
+    data[kind].push(e);
+    return e.id;
+  });
+
+  const updateEntity = (kind, id, patch, opts) => commit(`edit ${KIND_ONE[kind]}`, () => {
+    const e = entity(kind, id);
+    if (e) Object.assign(e, patch);
+  }, opts);
+
+  // Changes that are measured rather than chosen (like a note's preview) are not undo steps.
+  function setQuiet(kind, id, patch) {
+    const e = entity(kind, id);
+    if (!e) return;
+    Object.assign(e, patch);
+    emit({ label: 'quiet', quiet: true });
+  }
+
+  const deleteEntity = (kind, id) => commit(`delete ${KIND_ONE[kind]}`, () => {
+    const i = data[kind].findIndex((e) => e.id === id);
+    if (i < 0) return false;
+    data[kind].splice(i, 1);
+    const f = SCENE_FIELD[kind];
+    for (const ch of data.chapters) for (const s of ch.scenes) s[f] = s[f].filter((x) => x !== id);
+    if (kind === 'tags') for (const k of ['characters', 'places', 'notes']) for (const e of data[k]) e.tags = e.tags.filter((x) => x !== id);
+    return true;
+  });
+
+  const duplicateEntity = (kind, id) => commit(`duplicate ${KIND_ONE[kind]}`, () => {
+    const e = entity(kind, id);
+    if (!e) return null;
+    const copy = JSON.parse(JSON.stringify(e));
+    copy.id = uid();
+    copy.name = (copy.name || '') + ' (copy)';
+    data[kind].splice(data[kind].indexOf(e) + 1, 0, copy);
+    return copy.id;
+  });
+
+  const addCategory = (kind, name = 'New category') => commit('add category', () => {
+    const c = { id: uid(), name };
+    data.categories[kind].push(c);
+    return c.id;
+  });
+  const renameCategory = (kind, id, name) => commit('rename category', () => {
+    const c = data.categories[kind].find((x) => x.id === id);
+    if (c) c.name = name;
+  });
+  const deleteCategory = (kind, id) => commit('delete category', () => {
+    data.categories[kind] = data.categories[kind].filter((c) => c.id !== id);
+    for (const e of data[kind]) if (e.category === id) e.category = '';
+  });
+  const moveCategory = (kind, id, at) => commit('move category', () => {
+    const list = data.categories[kind];
+    const from = list.findIndex((c) => c.id === id);
+    if (from < 0) return;
+    const [c] = list.splice(from, 1);
+    let pos = at;
+    if (from < pos) pos--;
+    list.splice(clamp(pos, list.length), 0, c);
+  });
+
   // Word counts are measured, not edited, so they are not undo steps.
   function setWords(id, n) {
     const d = doc(id);
@@ -265,10 +405,14 @@
     get data() { return data; },
     load, on: (cb) => listeners.push(cb),
     find: { chapter: findChapter, scene: findScene, plotline: findPlotline },
-    doc, STATUSES, chapterWords, totalWords, setWords,
+    doc, entity, scenesWith, dropcapOwner, STATUSES, KINDS, KIND_ONE, SCENE_FIELD,
+    chapterWords, totalWords, setWords,
+    batch: (label, fn, opts) => commit(label, fn, opts),
     addChapter, insertChapterWithScene, updateChapter, deleteChapter, moveChapter,
     addScene, updateScene, deleteScene, moveScene, duplicateScene,
     addPlotline, updatePlotline, deletePlotline, movePlotline,
+    addEntity, updateEntity, setQuiet, deleteEntity, duplicateEntity,
+    addCategory, renameCategory, deleteCategory, moveCategory,
     undo, redo, canUndo: () => undoStack.length > 0, canRedo: () => redoStack.length > 0
   };
 })();

@@ -8,7 +8,7 @@
   const page = $('#page');
   const ribbon = $('#ribbon');
   const blockSel = $('#rb-block');
-  const fontSel = $('#rb-font');
+  const fontBtn = $('#rb-font');
   const sizeSel = $('#rb-size');
   const spacingSel = $('#rb-spacing');
   const colorIn = $('#rb-color');
@@ -87,9 +87,7 @@
     if (el) {
       const cs = getComputedStyle(el);
       sizeSel.value = String(Math.round(parseFloat(cs.fontSize)));
-      const family = cs.fontFamily.split(',')[0].replace(/["']/g, '').trim().toLowerCase();
-      const match = [...fontSel.options].find((o) => o.value.toLowerCase() === family);
-      fontSel.value = match ? match.value : '';
+      fontBtn.querySelector('.fp-label').textContent = cs.fontFamily.split(',')[0].replace(/["']/g, '').trim() || 'Font';
       const blk = el.closest(BLOCKS);
       const lh = blk && blk.style.lineHeight ? blk.style.lineHeight : '1.75';
       spacingSel.value = [...spacingSel.options].some((o) => o.value === lh) ? lh : '1.75';
@@ -118,7 +116,7 @@
   });
 
   blockSel.addEventListener('change', () => exec('formatBlock', `<${blockSel.value}>`));
-  fontSel.addEventListener('change', () => exec('fontName', fontSel.value));
+  emw.fontPicker(fontBtn, { onPick: (name) => exec('fontName', name) });
   sizeSel.addEventListener('change', () => applyFontSize(Number(sizeSel.value)));
   spacingSel.addEventListener('change', () => {
     restore();
@@ -178,12 +176,56 @@
     editor.classList.toggle('empty', !editor.textContent && !editor.querySelector('hr') && editor.children.length <= 1);
   };
 
-  editor.addEventListener('input', () => {
+  editor.addEventListener('input', (e) => {
     if (pendingSize) { fixFontSizes(pendingSize); pendingSize = null; }
     updateEmpty();
+    if (e.inputType === 'insertText' && e.data === '-') dashToEmDash();
+    if (typewriter) requestAnimationFrame(centerCaret);
   });
 
+  // Typing -- turns into an em dash.
+  function dashToEmDash() {
+    const sel = getSelection();
+    if (!sel.rangeCount || !sel.isCollapsed) return;
+    const node = sel.anchorNode;
+    const at = sel.anchorOffset;
+    if (node.nodeType !== Node.TEXT_NODE || at < 2 || node.data.slice(at - 2, at) !== '--') return;
+    const r = document.createRange();
+    r.setStart(node, at - 2);
+    r.setEnd(node, at);
+    sel.removeAllRanges();
+    sel.addRange(r);
+    document.execCommand('insertText', false, '—');
+  }
+
+  // Pressing Enter on an empty line that follows a paragraph of text makes a scene break.
+  const blockOf = (node) => {
+    let n = node && (node.nodeType === 1 ? node : node.parentElement);
+    while (n && n !== editor && n.parentElement !== editor) n = n.parentElement;
+    return n === editor ? null : n;
+  };
+  function sceneBreak(block) {
+    const r = document.createRange();
+    r.selectNode(block);
+    const sel = getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+    document.execCommand('styleWithCSS', false, false);
+    document.execCommand('insertHTML', false, '<hr><p><br></p>');
+  }
+
   editor.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const sel = getSelection();
+      const block = sel.rangeCount && sel.isCollapsed ? blockOf(sel.anchorNode) : null;
+      const prev = block && block.previousElementSibling;
+      if (block && block.tagName === 'P' && !block.textContent && !block.querySelector('img') &&
+          prev && prev.tagName === 'P' && prev.textContent.trim()) {
+        e.preventDefault();
+        sceneBreak(block);
+        return;
+      }
+    }
     if (e.key !== 'Tab' || e.ctrlKey || e.metaKey || e.altKey) return;
     e.preventDefault();
     const inList = getSelection().anchorNode?.parentElement?.closest('li');
@@ -263,5 +305,72 @@
       page.scrollTop = 0;
       updateEmpty();
     }
+  };
+
+  emw.sanitize = sanitize;
+  emw.safeUrl = safeUrl;
+
+  // ---- typewriter mode: the line you are writing stays near the middle of the page ----------
+  let typewriter = false;
+  const twBtn = $('#rb-typewriter');
+  function centerCaret() {
+    if (!typewriter || !inEditor()) return;
+    const sel = getSelection();
+    let rect = sel.getRangeAt(0).getClientRects()[0];
+    if (!rect) {
+      const node = sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentElement;
+      rect = node.getBoundingClientRect();
+    }
+    const box = page.getBoundingClientRect();
+    const delta = rect.top - (box.top + box.height * 0.45);
+    if (Math.abs(delta) > 3) page.scrollTop += delta;
+  }
+  function setTypewriter(on) {
+    typewriter = on;
+    editor.classList.toggle('typewriter', on);
+    twBtn.setAttribute('aria-pressed', String(on));
+    try { localStorage.setItem('emwriter.typewriter', on ? '1' : '0'); } catch { /* ignore */ }
+    if (on) centerCaret();
+  }
+  twBtn.addEventListener('click', () => { setTypewriter(!typewriter); editor.focus(); });
+  editor.addEventListener('keyup', (e) => {
+    if (typewriter && /^(Arrow|Page|Home|End|Enter|Backspace|Delete)/.test(e.key)) centerCaret();
+  });
+  try { if (localStorage.getItem('emwriter.typewriter') === '1') setTypewriter(true); } catch { /* ignore */ }
+
+  // ---- drop cap: settings live on the chapter, the app tells us what to show ------------------
+  const dcBtn = $('#rb-dropcap');
+  const dcFont = $('#rb-dc-font');
+  const dcLines = $('#rb-dc-lines');
+  const dcGap = $('#rb-dc-gap');
+  const dcColor = $('#rb-dc-color');
+  const dcSwatch = $('#sw-dc');
+  const dcReset = $('#rb-dc-reset');
+  const dcEdit = (patch) => { if (emw.editor.onDropcapEdit) emw.editor.onDropcapEdit(patch); };
+
+  dcBtn.addEventListener('click', () => dcEdit({ on: dcBtn.getAttribute('aria-pressed') !== 'true' }));
+  emw.fontPicker(dcFont, { onPick: (name) => dcEdit({ font: name }) });
+  dcLines.addEventListener('change', () => dcEdit({ lines: Number(dcLines.value) }));
+  dcGap.addEventListener('input', () => dcEdit({ gap: Math.max(0, Math.min(40, Number(dcGap.value) || 0)) }));
+  dcColor.addEventListener('input', () => dcEdit({ color: dcColor.value }));
+  dcReset.addEventListener('click', () => dcEdit({ font: '', lines: 3, gap: 8, color: '' }));
+
+  emw.editor.syncDropcap = (settings, active) => {
+    const dc = Object.assign({ on: false, font: '', lines: 3, gap: 8, color: '' }, settings);
+    dcBtn.setAttribute('aria-pressed', String(dc.on));
+    for (const c of [dcFont, dcLines, dcGap, dcColor, dcReset]) c.disabled = !dc.on;
+    dcFont.querySelector('.fp-label').textContent = dc.font || 'Same as text';
+    if (document.activeElement !== dcLines) dcLines.value = String(dc.lines);
+    if (document.activeElement !== dcGap) dcGap.value = String(dc.gap);
+    if (dc.color) dcColor.value = dc.color;
+    dcSwatch.style.setProperty('--c', dc.color || '#dcdcdc');
+    editor.classList.toggle('dc-on', dc.on && active);
+    editor.style.setProperty('--dc-lines', dc.lines);
+    editor.style.setProperty('--dc-gap', dc.gap + 'px');
+    editor.style.setProperty('--dc-font', dc.font ? `"${dc.font}"` : 'inherit');
+    editor.style.setProperty('--dc-color', dc.color || 'inherit');
+    dcBtn.title = dc.on && !active
+      ? 'Drop cap is on for this chapter. It shows on the chapter’s first paragraph, which is in another scene.'
+      : 'Drop cap on the first paragraph of this chapter';
   };
 })();

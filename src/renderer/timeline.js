@@ -16,6 +16,7 @@
 
   let compact = false;
   let query = '';
+  let filter = '';
   let rafId = 0;
   let stale = true;
   try { compact = localStorage.getItem(COMPACT_KEY) === '1'; } catch { /* ignore */ }
@@ -29,7 +30,14 @@
   const plural = (n, w) => `${n.toLocaleString()} ${w}${n === 1 ? '' : 's'}`;
   const chapterLabel = (ch, i) => ch.title.trim() || `Chapter ${i + 1}`;
   const sceneLabel = (s) => s.title.trim() || 'Untitled scene';
-  const haystack = (s) => [s.title, s.description, s.notes, ...s.characters, ...s.places, ...s.tags].join('\n').toLowerCase();
+  const names = (kind, ids) => ids.map((id) => S.entity(kind, id)?.name || '');
+  const haystack = (s) => [s.title, s.description, ...names('characters', s.characters), ...names('places', s.places), ...names('tags', s.tags)].join('\n').toLowerCase();
+  const FIELD = { characters: 'characters', places: 'places', tags: 'tags' };
+  const passesFilter = (s) => {
+    if (!filter) return true;
+    const [kind, id] = filter.split(':');
+    return s[FIELD[kind]].includes(id);
+  };
 
   // ---- building the grid -----------------------------------------------------
   function kebab() {
@@ -57,7 +65,7 @@
     c.draggable = true;
     c.setAttribute('role', 'button');
     c.style.setProperty('--c', s.color || pl.color);
-    if (q && !haystack(s).includes(q)) c.classList.add('dim');
+    if ((q && !haystack(s).includes(q)) || !passesFilter(s)) c.classList.add('dim');
     const ins = el('span', 'ins');
     ins.dataset.at = ch.scenes.indexOf(s);
     ins.title = 'Insert a scene above';
@@ -68,7 +76,16 @@
     dot.title = S.STATUSES[s.status] || '';
     meta.append(dot);
     if (s.words) meta.append(document.createTextNode(s.words.toLocaleString()));
-    c.append(ins, text, meta);
+    const tags = el('div', 'card-tags');
+    for (const id of s.tags.slice(0, 6)) {
+      const t = S.entity('tags', id);
+      if (!t) continue;
+      const d = el('i', 'tag-dot');
+      d.style.background = t.color;
+      d.title = t.name;
+      tags.append(d);
+    }
+    c.append(ins, text, tags, meta);
     return c;
   }
 
@@ -158,7 +175,23 @@
 
   function schedule() { if (!rafId) rafId = requestAnimationFrame(render); }
 
+  function fillFilter() {
+    const sel = $('#tl-filter');
+    const nodes = [new Option('Everything', '')];
+    for (const [kind, label] of [['characters', 'Character'], ['places', 'Place'], ['tags', 'Tag']]) {
+      if (!S.data[kind].length) continue;
+      const g = document.createElement('optgroup');
+      g.label = label + 's';
+      for (const e of S.data[kind]) g.append(new Option(e.name || `Unnamed ${label.toLowerCase()}`, `${kind}:${e.id}`));
+      nodes.push(g);
+    }
+    sel.replaceChildren(...nodes);
+    if (![...sel.querySelectorAll('option')].some((o) => o.value === filter)) filter = '';
+    sel.value = filter;
+  }
+
   function updateToolbar() {
+    fillFilter();
     undoBtn.disabled = !S.canUndo();
     redoBtn.disabled = !S.canRedo();
     const scenes = S.data.chapters.reduce((n, c) => n + c.scenes.length, 0);
@@ -387,6 +420,7 @@
     render();
   });
   searchEl.addEventListener('input', () => { query = searchEl.value; schedule(); });
+  $('#tl-filter').addEventListener('change', (e) => { filter = e.target.value; schedule(); });
 
   // ---- keeping in step with the store -------------------------------------------
   S.on(() => {

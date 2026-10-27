@@ -127,6 +127,13 @@
     contextEl.textContent = isChapter ? count(d.item.scenes.length, 'scene') : `Scene in ${chapterLabel(d.chapter)}`;
   }
 
+  // The drop cap shows on the first paragraph of the chapter, wherever that paragraph lives.
+  function syncDropcap() {
+    const d = curDoc();
+    if (!d) return;
+    editor.syncDropcap(d.chapter.dropcap, S.dropcapOwner(d.chapter) === d.item.id);
+  }
+
   function updateFooter() {
     if (!S.data) return;
     stTotal.textContent = `${count(S.totalWords(), 'word')} in manuscript`;
@@ -174,7 +181,7 @@
     if (!dirtyText && !dirtyIndex) setSaveState('Saving…');
     clearTimeout(timer);
     timer = setTimeout(() => {
-      if (dirtyText) { recount(); dirtyIndex = true; updateCounts(); }
+      if (dirtyText) { recount(); dirtyIndex = true; updateCounts(); syncDropcap(); }
       flush();
     }, SAVE_DELAY_MS);
   }
@@ -195,8 +202,10 @@
     renderTree();
     renderInspector(true);
     updateCounts();
+    syncDropcap();
     try { localStorage.setItem(LAST_KEY, id); } catch { /* ignore */ }
     editor.focus();
+    document.dispatchEvent(new CustomEvent('emw:doc'));
   }
 
   // ---- actions --------------------------------------------------------------------------
@@ -246,6 +255,8 @@
     emw.toast(label ? `Redid: ${label}` : 'Nothing to redo', { ms: 2200 });
   }
 
+  emw.curDoc = curDoc;
+
   const textUndo = emw.actions.undo;
   const textRedo = emw.actions.redo;
   const onTimeline = () => emw.view() === 'timeline' && !emw.isTextField(document.activeElement);
@@ -260,12 +271,19 @@
   });
 
   // ---- store changes (from the timeline, tree, inspector, or undo) ------------------------
-  S.on(() => {
+  editor.onDropcapEdit = (patch) => {
+    const d = curDoc();
+    if (d) S.updateChapter(d.chapter.id, { dropcap: { ...d.chapter.dropcap, ...patch } }, { coalesce: `dropcap:${d.chapter.id}` });
+  };
+
+  S.on((info) => {
     dirtyIndex = true;
     scheduleSave();
+    if (info && info.quiet) return;
     if (curDoc()) {
       renderTree();
       renderInspector();
+      syncDropcap();
     } else if (S.data.chapters.length) {
       openDoc(S.data.chapters[0].id);   // the open item was removed (deleted or undone)
     }
@@ -409,7 +427,7 @@
 
   window.addEventListener('blur', flush);
   document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
-  window.api.onBeforeClose(async () => { await flush(); window.api.closeReady(); });
+  window.api.onBeforeClose(async () => { await flush(); emw.flushHooks.forEach((f) => f()); await new Promise((r) => setTimeout(r, 60)); window.api.closeReady(); });
   emw.onView(updateFooter);
 
   // ---- start ---------------------------------------------------------------------------------

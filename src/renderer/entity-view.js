@@ -331,27 +331,41 @@
       unpick.addEventListener('click', () => S.updateEntity(kind, sel, { hasThumb: false }));
     }
 
-    q('.ev-delete').addEventListener('click', () => {
-      const e = cur();
+    function deleteItem(id) {
+      const e = S.entity(kind, id);
       if (!e) return;
       const list = S.data[kind];
       const i = list.indexOf(e);
       const name = e.name || `Unnamed ${cfg.one}`;
       flushContent();
       S.deleteEntity(kind, e.id);
-      select((list[Math.min(i, list.length - 1)] || {}).id || null);
+      if (id === sel) select((list[Math.min(i, list.length - 1)] || {}).id || null);   // deleting another row leaves the selection alone
       emw.toast(`Deleted “${name}”`, { action: { label: 'Undo', run: () => { S.undo(); } } });
-    });
-    q('.ev-dup').addEventListener('click', async () => {
-      const e = cur();
+    }
+    async function duplicateItem(id) {
+      const e = S.entity(kind, id);
       if (!e) return;
       flushContent();
-      const id = S.duplicateEntity(kind, e.id);
+      const copy = S.duplicateEntity(kind, e.id);
       const [html, thumb] = await Promise.all([emw.files.read(e.id), e.hasThumb ? emw.files.read('thumb-' + e.id) : '']);
-      if (html) await emw.files.write(id, html);
-      if (thumb) await emw.files.write('thumb-' + id, thumb);
-      select(id, { focusName: true });
-    });
+      if (html) await emw.files.write(copy, html);
+      if (thumb) await emw.files.write('thumb-' + copy, thumb);
+      select(copy, { focusName: true });
+    }
+    q('.ev-delete').addEventListener('click', () => { if (sel) deleteItem(sel); });
+    q('.ev-dup').addEventListener('click', () => { if (sel) duplicateItem(sel); });
+    // Sending flushes a note's pending body first (emw.darlings does it), and the store change
+    // makes onStore move the selection if the open item left.
+    const sendItem = (id) => emw.darlings.send(cfg.one, id, { origin: kind });
+    function itemMenu(id, x, y) {
+      emw.menu(x, y, [
+        { label: 'Rename', run: () => { if (id !== sel) select(id); nameEl.focus(); nameEl.select(); } },
+        { label: 'Duplicate', run: () => duplicateItem(id) },
+        { label: 'Send to Darlings', run: () => sendItem(id) },
+        null,
+        { label: 'Delete', danger: true, run: () => deleteItem(id) }
+      ]);
+    }
 
     q('.ev-new').addEventListener('click', () => newItem());
     function newItem(catId) {
@@ -382,6 +396,7 @@
         { label: 'Move up', disabled: i === 0, run: () => S.moveCategory(kind, id, i - 1) },
         { label: 'Move down', disabled: i === list.length - 1, run: () => S.moveCategory(kind, id, i + 2) },
         null,
+        { label: 'Send to Darlings', run: () => emw.darlings.send('category', id, { origin: kind, entityKind: kind }) },
         { label: 'Delete category', danger: true, run: () => {
           const name = list[i].name;
           S.deleteCategory(kind, id);
@@ -403,13 +418,22 @@
     });
     groupsEl.addEventListener('contextmenu', (e) => {
       const g = e.target.closest('.ev-group');
-      if (g && g.dataset.cat && e.target.closest('.ev-cat')) { e.preventDefault(); categoryMenu(g.dataset.cat, e.clientX, e.clientY); }
+      if (g && g.dataset.cat && e.target.closest('.ev-cat')) { e.preventDefault(); categoryMenu(g.dataset.cat, e.clientX, e.clientY); return; }
+      const li = e.target.closest('.ev-item');
+      if (li) { e.preventDefault(); itemMenu(li.dataset.id, e.clientX, e.clientY); }
     });
 
     // Drag an item onto a category heading to move it there.
     let dragId = null;
     const clearMarks = () => groupsEl.querySelectorAll('.drop-over').forEach((n) => n.classList.remove('drop-over'));
-    groupsEl.addEventListener('dragstart', (e) => { const li = e.target.closest?.('.ev-item'); if (li) { dragId = li.dataset.id; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', dragId); } });
+    groupsEl.addEventListener('dragstart', (e) => {
+      const li = e.target.closest?.('.ev-item');
+      if (!li) return;
+      dragId = li.dataset.id;
+      emw.dragItem = { kind: cfg.one, id: dragId, origin: kind };   // so the Darlings tab can take it
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', dragId);
+    });
     groupsEl.addEventListener('dragover', (e) => { if (!dragId) return; const g = e.target.closest('.ev-group'); clearMarks(); if (g) { e.preventDefault(); g.classList.add('drop-over'); } });
     groupsEl.addEventListener('drop', (e) => {
       const g = e.target.closest('.ev-group');
@@ -418,7 +442,7 @@
       e.preventDefault();
       S.updateEntity(kind, dragId, { category: g.dataset.cat });
     });
-    groupsEl.addEventListener('dragend', () => { dragId = null; clearMarks(); });
+    groupsEl.addEventListener('dragend', () => { dragId = null; emw.dragItem = null; clearMarks(); });
 
     // ---- keeping up with the store ----------------------------------------------------------------
     let stale = true;

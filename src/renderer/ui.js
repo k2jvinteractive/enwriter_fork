@@ -41,15 +41,16 @@
   // ---- Toast with optional action (used for "Undo") ---------------------------
   const toastEl = $('#toast');
   let toastTimer = 0;
-  emw.toast = (message, { action, ms = 5000 } = {}) => {
+  // `action` is one button; `actions` is a list (a toast can offer Undo and a second step).
+  emw.toast = (message, { action, actions, ms = 5000 } = {}) => {
     const text = document.createElement('span');
     text.textContent = message;
     toastEl.replaceChildren(text);
-    if (action) {
+    for (const a of actions || (action ? [action] : [])) {
       const b = document.createElement('button');
       b.type = 'button';
-      b.textContent = action.label;
-      b.addEventListener('click', () => { toastEl.hidden = true; action.run(); });
+      b.textContent = a.label;
+      b.addEventListener('click', () => { toastEl.hidden = true; a.run(); });
       toastEl.append(b);
     }
     toastEl.hidden = false;
@@ -132,6 +133,8 @@
       null,
       ['Undo chapter or scene change', 'Ctrl+Alt+Z', 'undoStructure'],
       ['Redo chapter or scene change', 'Ctrl+Alt+Shift+Z', 'redoStructure'],
+      null,
+      ['Send to Darlings', 'Ctrl+Shift+D', 'sendToDarlings'],
       null,
       ['Select all', 'Ctrl+A', 'selectAll']
     ]],
@@ -264,7 +267,7 @@
     home: 'Home', places: 'Places', characters: 'Characters', timeline: 'Timeline',
     manuscript: 'Manuscript', darlings: 'Darlings', notes: 'Notes', tags: 'Tags'
   };
-  const BUILT = ['manuscript', 'timeline', 'characters', 'places', 'notes', 'tags'];
+  const BUILT = ['manuscript', 'timeline', 'characters', 'places', 'notes', 'tags', 'darlings'];
   let currentView = 'manuscript';
   const tabs = $$('.tab[data-view]');
 
@@ -273,7 +276,7 @@
     const built = BUILT.includes(name);
     for (const v of BUILT) $('#view-' + v).hidden = v !== name;
     $('#blank').hidden = built;
-    $('#stats').hidden = !(name === 'manuscript' || name === 'timeline');
+    $('#stats').hidden = !built;   // each view decides which of its parts show (see darlings.js)
     $('#blank-title').textContent = TITLES[name];
     tabs.forEach((t) => t.setAttribute('aria-current', String(t.dataset.view === name)));
     emw.viewListeners.forEach((cb) => cb(name));

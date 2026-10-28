@@ -76,6 +76,11 @@
     if (!data.plotlines.length) data.plotlines.push({ id: uid(), name: 'Main Plot', color: '#e8caa4' });
     if (!Array.isArray(data.chapters)) data.chapters = [];
     if (!data.chapters.length) data.chapters.push(blankChapter());
+    // Darlings: older saves have none. Drop anything that could not be restored or listed.
+    if (!Array.isArray(data.darlings)) data.darlings = [];
+    data.darlings = data.darlings
+      .filter((d) => d && typeof d.id === 'string' && typeof d.kind === 'string')
+      .map((d) => Object.assign({ label: '', origin: 'manuscript', createdAt: 0, preview: '', restore: {}, payload: {} }, d));
 
     data.categories = data.categories || {};
     for (const kind of KINDS) {
@@ -207,7 +212,12 @@
   function restore(json) {
     const words = new Map();
     for (const c of data.chapters) for (const s of c.scenes) words.set(s.id, s.words);
+    // Text darlings are cut from the editor, whose own undo the store knows nothing about. Rolling
+    // them back here could leave text that is in neither the scene nor Darlings, so they are kept.
+    const textDarlings = (data.darlings || []).filter((d) => d.kind === 'text');
     data = JSON.parse(json);
+    data.darlings = (data.darlings || []).filter((d) => d.kind !== 'text').concat(textDarlings)
+      .sort((a, b) => b.createdAt - a.createdAt);
     for (const c of data.chapters) for (const s of c.scenes) if (words.has(s.id)) s.words = words.get(s.id);
   }
   function step(from, to, verb) {
@@ -430,7 +440,253 @@
     return made;
   }
 
+  // ---- darlings ----------------------------------------------------------------
+  // Things the writer wants out of the way but not deleted. Long text is never copied into the
+  // index: scene bodies, note bodies and thumbnails stay in their own files (keyed by the same
+  // ids, which the app never deletes), so restoring is lossless. Only cut-out text, which has no
+  // file of its own, gets one (`darling-<id>`, written by the caller before it calls us).
+  const ENTITY_KIND = { character: 'characters', place: 'places', note: 'notes', tag: 'tags' };
+  const clone = (v) => JSON.parse(JSON.stringify(v));
+  const sceneName = (s) => (s.title || '').trim() || 'Untitled scene';
+  const chapterName = (ch) => (ch.title || '').trim() || `Chapter ${data.chapters.indexOf(ch) + 1}`;
+  const findDarling = (id) => data.darlings.find((d) => d.id === id) || null;
+  const entKindOf = (v) => ENTITY_KIND[v] || (KINDS.includes(v) ? v : null);
+
+  function darlingsFor({ origin, sceneId } = {}) {
+    return data.darlings.filter((d) => (!origin || d.origin === origin) &&
+      (!sceneId || (d.kind === 'text' && d.restore.sceneId === sceneId)));
+  }
+  const darlingCount = (origin) => darlingsFor({ origin }).length;
+
+  // kind: text | scene | chapter | plotline | character | place | note | tag | category.
+  // For `text`, id is the source scene and opts carries { id, preview, offset, anchor, block }.
+  // For `category`, opts.entityKind says which list it belongs to. Returns the darling id, or null
+  // when the item is missing or cannot leave (the last chapter and the last plotline stay).
+  function sendToDarlings(kind, id, opts = {}) {
+    const did = opts.id || uid();
+    const make = (extra) => Object.assign({ id: did, createdAt: Date.now(), preview: '', restore: {}, payload: {} }, extra);
+    const place = (rec) => { data.darlings.unshift(rec); return did; };
+    const entKind = ENTITY_KIND[kind];
+
+    if (kind === 'text') {
+      const f = findScene(id);
+      if (!f) return null;
+      const preview = String(opts.preview || '').slice(0, 200);
+      place(make({
+        kind, label: preview.slice(0, 60).trim() || 'Text', origin: opts.origin || 'manuscript', preview,
+        restore: {
+          sceneId: id, chapterId: f.chapter.id, chapterIndex: data.chapters.indexOf(f.chapter),
+          offset: Number(opts.offset) || 0, anchor: String(opts.anchor || ''), block: !!opts.block,
+          from: `${chapterName(f.chapter)} › ${sceneName(f.scene)}`
+        },
+        payload: { file: 'darling-' + did }
+      }));
+      // Not an undo step: the editor owns undo for text (see restore()).
+      emit({ label: 'send text to darlings' });
+      return did;
+    }
+
+    return commit('send to darlings', () => {
+      if (kind === 'scene') {
+        const f = findScene(id);
+        if (!f) return null;
+        const ci = data.chapters.indexOf(f.chapter);
+        const si = f.chapter.scenes.indexOf(f.scene);
+        const from = chapterName(f.chapter);
+        f.chapter.scenes.splice(si, 1);
+        return place(make({
+          kind, label: sceneName(f.scene), origin: opts.origin || 'manuscript', preview: (f.scene.description || '').slice(0, 200),
+          restore: { chapterId: f.chapter.id, chapterIndex: ci, index: si, plotlineId: f.scene.plotline, from },
+          payload: { scene: clone(f.scene) }
+        }));
+      }
+      if (kind === 'chapter') {
+        const ch = findChapter(id);
+        if (!ch || data.chapters.length <= 1) return null;
+        const label = chapterName(ch);
+        const i = data.chapters.indexOf(ch);
+        data.chapters.splice(i, 1);
+        return place(make({
+          kind, label, origin: opts.origin || 'manuscript',
+          preview: `${ch.scenes.length} scene${ch.scenes.length === 1 ? '' : 's'}${ch.synopsis ? ' · ' + ch.synopsis.slice(0, 160) : ''}`,
+          restore: { index: i }, payload: { chapter: clone(ch) }
+        }));
+      }
+      if (kind === 'plotline') {
+        const pl = findPlotline(id);
+        if (!pl || data.plotlines.length <= 1) return null;
+        const scenes = [];
+        data.chapters.forEach((ch, ci) => ch.scenes.forEach((s, si) => {
+          if (s.plotline === id) scenes.push({ scene: clone(s), chapterId: ch.id, chapterIndex: ci, index: si });
+        }));
+        const i = data.plotlines.indexOf(pl);
+        data.plotlines.splice(i, 1);
+        for (const ch of data.chapters) ch.scenes = ch.scenes.filter((s) => s.plotline !== id);
+        return place(make({
+          kind, label: pl.name, origin: opts.origin || 'timeline',
+          preview: `${scenes.length} scene${scenes.length === 1 ? '' : 's'}`,
+          restore: { index: i }, payload: { plotline: clone(pl), scenes }
+        }));
+      }
+      if (entKind) {
+        const i = data[entKind].findIndex((e) => e.id === id);
+        if (i < 0) return null;
+        const e = data[entKind][i];
+        const field = SCENE_FIELD[entKind];
+        // Remember every link before cutting it, so restore can put each one back.
+        const sceneIds = [];
+        for (const ch of data.chapters) for (const s of ch.scenes) if (s[field].includes(id)) sceneIds.push(s.id);
+        const holders = {};
+        if (entKind === 'tags') {
+          for (const k of ['characters', 'places', 'notes']) holders[k] = data[k].filter((x) => x.tags.includes(id)).map((x) => x.id);
+        }
+        const cat = data.categories[entKind].find((c) => c.id === e.category);
+        data[entKind].splice(i, 1);
+        for (const ch of data.chapters) for (const s of ch.scenes) s[field] = s[field].filter((x) => x !== id);
+        if (entKind === 'tags') for (const k of ['characters', 'places', 'notes']) for (const x of data[k]) x.tags = x.tags.filter((t) => t !== id);
+        return place(make({
+          kind, label: e.name || `Unnamed ${kind}`, origin: opts.origin || entKind, preview: String(e.short || e.preview || '').slice(0, 200),
+          restore: { entityKind: entKind, index: i, categoryId: e.category, categoryName: cat ? cat.name : '', sceneIds, holders },
+          payload: { entity: clone(e) }
+        }));
+      }
+      if (kind === 'category') {
+        const k = entKindOf(opts.entityKind);
+        if (!k) return null;
+        const list = data.categories[k];
+        const i = list.findIndex((c) => c.id === id);
+        if (i < 0) return null;
+        const [cat] = list.splice(i, 1);
+        const entityIds = data[k].filter((e) => e.category === id).map((e) => e.id);
+        for (const e of data[k]) if (e.category === id) e.category = '';
+        return place(make({
+          kind, label: cat.name, origin: opts.origin || k, preview: `${entityIds.length} ${k}`,
+          restore: { entityKind: k, index: i, entityIds }, payload: { category: clone(cat) }
+        }));
+      }
+      return null;
+    });
+  }
+
+  // Puts a darling back (everything except text, which needs the editor: see darlings.js).
+  // Returns { show, notice } or { error }. Falls back sensibly when a parent is gone, and never
+  // fails silently. One undo step.
+  function restoreDarling(id) {
+    const rec = findDarling(id);
+    if (!rec) return { error: 'That darling no longer exists' };
+    if (rec.kind === 'text') return { error: 'Text is restored through the editor' };
+    const r = rec.restore;
+    const p = rec.payload;
+    return commit('restore from darlings', () => {
+      const notes = [];
+      let show = null;
+      const taken = (v) => ({ error: `Cannot restore: ${v} already exists` });
+      const cleanLinks = (s) => {
+        for (const k of ['characters', 'places', 'tags']) s[k] = (s[k] || []).filter((x) => entity(k, x));
+        s.noteIds = (s.noteIds || []).filter((x) => entity('notes', x));
+        if (!findPlotline(s.plotline)) { s.plotline = data.plotlines[0].id; notes.push('its plotline no longer exists, so it moved to the first plotline'); }
+      };
+      const nearestChapter = () => data.chapters[clamp(r.chapterIndex || 0, data.chapters.length - 1)];
+
+      if (rec.kind === 'scene') {
+        const scene = clone(p.scene);
+        if (findScene(scene.id)) return taken('a scene with this id');
+        let ch = findChapter(r.chapterId);
+        let at;
+        if (ch) at = clamp(r.index, ch.scenes.length);
+        else { ch = nearestChapter(); at = ch.scenes.length; notes.unshift('its chapter no longer exists, so it went to ' + chapterName(ch)); }
+        cleanLinks(scene);
+        ch.scenes.splice(at, 0, scene);
+        show = { kind: 'scene', id: scene.id };
+      } else if (rec.kind === 'chapter') {
+        const ch = clone(p.chapter);
+        if (findChapter(ch.id) || ch.scenes.some((s) => findScene(s.id))) return taken('this chapter or one of its scenes');
+        ch.scenes.forEach(cleanLinks);
+        data.chapters.splice(clamp(r.index, data.chapters.length), 0, ch);
+        show = { kind: 'chapter', id: ch.id };
+      } else if (rec.kind === 'plotline') {
+        const pl = clone(p.plotline);
+        if (findPlotline(pl.id) || p.scenes.some((x) => findScene(x.scene.id))) return taken('this plotline or one of its scenes');
+        data.plotlines.splice(clamp(r.index, data.plotlines.length), 0, pl);
+        const ordered = [...p.scenes].sort((a, b) => a.chapterIndex - b.chapterIndex || a.index - b.index);
+        let moved = 0;
+        for (const item of ordered) {
+          const s = clone(item.scene);
+          let ch = findChapter(item.chapterId);
+          if (!ch) { ch = data.chapters[clamp(item.chapterIndex, data.chapters.length - 1)]; moved++; }
+          cleanLinks(s);
+          ch.scenes.splice(clamp(item.index, ch.scenes.length), 0, s);
+        }
+        if (moved) notes.push(`${moved} scene${moved === 1 ? '' : 's'} went to the nearest chapter because the original no longer exists`);
+        show = { kind: 'plotline', id: pl.id };
+      } else if (ENTITY_KIND[rec.kind]) {
+        const k = r.entityKind;
+        const e = clone(p.entity);
+        if (data[k].some((x) => x.id === e.id)) return taken('this ' + rec.kind);
+        if (!data.categories[k].some((c) => c.id === e.category)) {
+          e.category = '';
+          notes.push(`its category${r.categoryName ? ' “' + r.categoryName + '”' : ''} no longer exists, so it is uncategorised`);
+        }
+        if (Array.isArray(e.tags)) e.tags = e.tags.filter((t) => entity('tags', t));
+        data[k].splice(clamp(r.index, data[k].length), 0, e);
+        const field = SCENE_FIELD[k];
+        let relinked = 0;
+        for (const sid of r.sceneIds || []) {
+          const f = findScene(sid);
+          if (f && !f.scene[field].includes(e.id)) { f.scene[field].push(e.id); relinked++; }
+        }
+        for (const [hk, ids] of Object.entries(r.holders || {})) {
+          for (const hid of ids) { const h = entity(hk, hid); if (h && !h.tags.includes(e.id)) h.tags.push(e.id); }
+        }
+        const lost = (r.sceneIds || []).length - relinked;
+        if (lost > 0) notes.push(`${lost} scene${lost === 1 ? '' : 's'} it was attached to no longer exist${lost === 1 ? 's' : ''}`);
+        show = { kind: rec.kind, id: e.id };
+      } else if (rec.kind === 'category') {
+        const k = r.entityKind;
+        const list = data.categories[k];
+        const cat = clone(p.category);
+        if (list.some((c) => c.id === cat.id)) return taken('this category');
+        list.splice(clamp(r.index, list.length), 0, cat);
+        for (const eid of r.entityIds || []) {
+          const e = entity(k, eid);
+          // Only take back items that are still uncategorised; leave anything the writer has since filed elsewhere.
+          if (e && !list.some((c) => c.id === e.category && c.id !== cat.id)) e.category = cat.id;
+        }
+        show = { kind: 'category', id: cat.id, entityKind: k };
+      } else return { error: 'Unknown kind of darling' };
+
+      data.darlings = data.darlings.filter((d) => d.id !== id);
+      return { show, notice: notes.length ? `Restored “${rec.label}”: ${notes.join('; ')}.` : '' };
+    });
+  }
+
+  // Permanent removal from the list (the body files stay on disk). Returns the removed record so
+  // the caller can offer Undo. Text darlings are outside store undo, so they have their own path.
+  function deleteDarling(id) {
+    const rec = findDarling(id);
+    if (!rec) return null;
+    if (rec.kind === 'text') { discardDarling(id); return rec; }
+    commit('delete darling', () => { data.darlings = data.darlings.filter((d) => d.id !== id); });
+    return rec;
+  }
+  // Removes a text darling without an undo step (after it is restored, or when the writer deletes it).
+  function discardDarling(id) {
+    const before = data.darlings.length;
+    data.darlings = data.darlings.filter((d) => d.id !== id);
+    if (data.darlings.length !== before) emit({ label: 'darlings' });
+  }
+  function readdDarling(rec) {
+    if (!rec || findDarling(rec.id)) return;
+    data.darlings.push(rec);
+    data.darlings.sort((a, b) => b.createdAt - a.createdAt);
+    emit({ label: 'darlings' });
+  }
+  // A count that changed without a data edit (a restored text changed a scene's words).
+  const touch = () => emit({ label: 'refresh' });
+
   emw.store = {
+    uid, touch, sendToDarlings, restoreDarling, deleteDarling, discardDarling, readdDarling, darlingsFor, darlingCount,
+    findDarling, ENTITY_KIND,
     migrationCandidates, migrateChapters,
     get data() { return data; },
     load, on: (cb) => listeners.push(cb),

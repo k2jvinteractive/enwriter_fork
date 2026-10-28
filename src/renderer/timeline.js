@@ -273,6 +273,7 @@
         { label: 'Insert chapter before', run: () => insertChapter(i, null) },
         { label: 'Insert chapter after', run: () => insertChapter(i + 1, null) },
         null,
+        { label: 'Send to Darlings', run: () => emw.darlings.send('chapter', id, { origin: 'timeline' }) },
         { label: 'Delete chapter', danger: true, run: () => deleteChapter(id) }
       ]);
     } else if (node.classList.contains('tl-label')) {
@@ -284,6 +285,7 @@
         { label: 'Move up', disabled: i === 0, run: () => { S.movePlotline(id, i - 1); render(); } },
         { label: 'Move down', disabled: i === S.data.plotlines.length - 1, run: () => { S.movePlotline(id, i + 2); render(); } },
         null,
+        { label: 'Send to Darlings', run: () => emw.darlings.send('plotline', id, { origin: 'timeline' }) },
         { label: 'Delete plotline', danger: true, run: () => deletePlot(id) }
       ]);
     } else if (node.classList.contains('card')) {
@@ -292,6 +294,7 @@
         { label: 'Open in manuscript', run: () => emw.actions.openScene(id) },
         { label: 'Duplicate', run: () => emw.actions.duplicateScene(id) },
         null,
+        { label: 'Send to Darlings', run: () => emw.darlings.send('scene', id, { origin: 'timeline' }) },
         { label: 'Delete scene', danger: true, run: () => emw.actions.deleteScene(id) }
       ]);
     }
@@ -383,6 +386,7 @@
     const n = e.target.closest?.('.card, .tl-col-head, .tl-label');
     if (!n || n !== e.target) return;
     drag = { kind: n.classList.contains('card') ? 'scene' : n.classList.contains('tl-col-head') ? 'chapter' : 'plotline', id: n.dataset.id };
+    emw.dragItem = { kind: drag.kind, id: drag.id, origin: 'timeline' };   // so the Darlings tab can take it
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', drag.id);
     n.classList.add('dragging');
@@ -407,6 +411,7 @@
   });
   grid.addEventListener('dragend', () => {
     drag = null;
+    emw.dragItem = null;
     clearMarks();
     grid.querySelector('.dragging')?.classList.remove('dragging');
   });

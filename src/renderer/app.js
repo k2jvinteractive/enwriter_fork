@@ -409,6 +409,7 @@
         { label: 'Add scene', run: () => newScene(id) },
         { label: 'Add chapter below', run: () => { const i = S.data.chapters.findIndex((c) => c.id === id); const nid = S.addChapter(i + 1); openDoc(nid).then(() => startTreeRename(nid)); } },
         null,
+        { label: 'Send to Darlings', run: () => emw.darlings.send('chapter', id, { origin: 'manuscript' }) },
         { label: 'Delete chapter', danger: true, run: () => deleteDoc(id) }
       ]
       : [
@@ -416,6 +417,7 @@
         { label: 'Show on timeline', run: () => { emw.showView('timeline'); } },
         { label: 'Duplicate', run: () => duplicateScene(id) },
         null,
+        { label: 'Send to Darlings', run: () => emw.darlings.send('scene', id, { origin: 'manuscript' }) },
         { label: 'Delete scene', danger: true, run: () => deleteDoc(id) }
       ];
     emw.menu(e.clientX, e.clientY, items);
@@ -448,6 +450,7 @@
     const li = e.target.closest?.('li');
     if (!li || li !== e.target) return;
     drag = { id: li.dataset.id, kind: li.dataset.kind };
+    emw.dragItem = { kind: drag.kind, id: drag.id, origin: 'manuscript' };   // so the Darlings tab can take it
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', drag.id);
   });
@@ -465,7 +468,7 @@
     e.preventDefault();
     t.run();
   });
-  listEl.addEventListener('dragend', () => { drag = null; clearMarks(); });
+  listEl.addEventListener('dragend', () => { drag = null; emw.dragItem = null; clearMarks(); });
 
   // ---- keyboard ----------------------------------------------------------------------------
   document.addEventListener('keydown', (e) => {

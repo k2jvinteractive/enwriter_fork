@@ -122,6 +122,7 @@
       { label: 'Open', run: () => emw.actions.openScene(id) },
       { label: 'Duplicate', run: () => emw.actions.duplicateScene(id) },
       null,
+      { label: 'Send to Darlings', run: () => emw.darlings.send('scene', id, { origin: 'manuscript' }) },
       { label: 'Delete scene', danger: true, run: () => emw.actions.deleteScene(id) }
     ]);
   });
@@ -145,6 +146,7 @@
     const c = e.target.closest?.('.cv-card');
     if (!c || c !== e.target) return;
     drag = { id: c.dataset.id };
+    emw.dragItem = { kind: 'scene', id: drag.id, origin: 'manuscript' };   // so the Darlings tab can take it
     c.classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', drag.id);
@@ -166,6 +168,7 @@
   });
   host.addEventListener('dragend', () => {
     drag = null;
+    emw.dragItem = null;
     clearMarks();
     host.querySelectorAll('.dragging').forEach((n) => n.classList.remove('dragging'));
   });

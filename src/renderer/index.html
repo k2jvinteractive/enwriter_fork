@@ -18,6 +18,7 @@
   <script src="entity-view.js" defer></script>
   <script src="app.js" defer></script>
   <script src="chapter-view.js" defer></script>
+  <script src="darlings.js" defer></script>
   <script src="inspector.js" defer></script>
 </head>
 <body>
@@ -189,7 +190,7 @@
           <button type="button" role="tab" data-tab="darlings" aria-selected="false">Darlings</button>
         </div>
         <div id="insp-notes" class="insp-panel"></div>
-        <div id="insp-darlings" class="insp-panel" hidden><p class="hint">Darlings are coming soon.</p></div>
+        <div id="insp-darlings" class="insp-panel" hidden></div>
       </section>
     </aside>
   </div>
@@ -213,6 +214,21 @@
     <div id="tl-scroll" class="tl-scroll"><div id="tl-grid" class="tl-grid"></div></div>
   </section>
 
+  <section id="view-darlings" class="entview darlings" hidden aria-label="Darlings">
+    <div class="dl-main">
+      <div class="tl-toolbar">
+        <h1>Darlings</h1>
+        <input id="dl-search" type="search" placeholder="Search darlings…" aria-label="Search darlings" spellcheck="false">
+        <select id="dl-filter" title="Where it was sent from" aria-label="Filter by where it was sent from"></select>
+        <span class="spacer"></span>
+        <span id="dl-count" class="muted"></span>
+      </div>
+      <div id="dl-list" class="dl-list" role="list"></div>
+      <p id="dl-empty" class="dl-empty" hidden>Nothing here yet. Right-click something, or drag it onto the Darlings tab.</p>
+    </div>
+    <aside id="dl-preview" class="dl-preview" aria-label="Preview"></aside>
+  </section>
+
   <section id="blank" class="blank" hidden>
     <h1 id="blank-title"></h1>
     <p>Nothing here yet.</p>
@@ -233,6 +249,7 @@
       <span id="st-words">0 words</span>
       <span id="st-save" class="save">Saved</span>
       <span id="st-total" class="total">0 words in manuscript</span>
+      <button id="st-darlings" class="st-darlings" type="button" hidden title="Show these in Darlings"></button>
     </div>
   </footer>
 

@@ -477,6 +477,136 @@ function create({ app, dialog, shell, writeAtomic }) {
     await writeLibrary(root, lib);
   }
 
+  // ---- changing the library location (part 5e) -----------------------------------------------
+  // The renderer never sends a path. It asks for a folder dialog (which records pickedFolder) and
+  // then names an action; everything below works on that one remembered folder.
+  let relocating = false;
+
+  // Every file's relative path and size, so a copy can be compared with its source.
+  // Anything that is not a plain file or folder (links, sockets) is ignored on both sides.
+  async function listTree(dir, base = dir, out = new Map()) {
+    for (const ent of await fs.readdir(dir, { withFileTypes: true })) {
+      const p = path.join(dir, ent.name);
+      const rel = path.relative(base, p);
+      if (ent.isDirectory()) { out.set(rel + path.sep, 0); await listTree(p, base, out); }
+      else if (ent.isFile()) out.set(rel, (await fs.stat(p)).size);
+    }
+    return out;
+  }
+
+  async function verifyCopy(srcDir, dstDir, newer) {
+    const a = await listTree(srcDir), b = await listTree(dstDir);
+    if (a.size !== b.size) return false;
+    for (const [k, v] of a) if (b.get(k) !== v) return false;
+    if (!(await readJson(path.join(dstDir, 'Meta', 'info.json')))) return false;
+    // A book from a newer emWriter is copied as is; we do not claim to understand its book.json.
+    if (!newer && !(await readJson(path.join(dstDir, 'book.json')))) return false;
+    return true;
+  }
+
+  const realOr = async (p) => { try { return await fs.realpath(p); } catch { return path.resolve(p); } };
+
+  // Looks at the folder the person picked and refuses the ones that can never work.
+  async function checkFolder() {
+    const p = pickedFolder;
+    if (typeof p !== 'string') throw new Error('Choose a folder first.');
+    let st = null;
+    try { st = await fs.stat(p); } catch { /* handled below */ }
+    if (!st || !st.isDirectory()) throw new Error('That folder cannot be read. Choose another one.');
+    const real = await realOr(p);
+    // A library cannot live inside a book: walk up through every parent.
+    for (let d = real, prev = ''; d !== prev; prev = d, d = path.dirname(d)) {
+      const info = await readJson(path.join(d, 'Meta', 'info.json'));
+      if (d.toLowerCase().endsWith(EXT) || (info && typeof info.bookId === 'string')) {
+        throw new Error('That folder is inside a book (' + path.basename(d) + '). Choose a folder outside any .mwt book.');
+      }
+    }
+    const current = await realOr(await libraryRoot());
+    const same = process.platform === 'linux' ? real === current : real.toLowerCase() === current.toLowerCase();
+    if (same) throw new Error('That is already your library folder. Choose a different one.');
+    // Probe for write access with a real file: permission bits do not tell the whole story.
+    const probe = path.join(p, '.emwriter-write-test-' + randomUUID().slice(0, 8));
+    try { await fs.writeFile(probe, ''); await fs.rm(probe, { force: true }); }
+    catch { throw new Error('emWriter cannot write to that folder (it may be read-only). Choose a folder you can save to.'); }
+    const entries = (await fs.readdir(p)).filter((n) => !n.startsWith('.'));
+    const raw = await readJson(libFile(p));
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      checkVersion(raw, 'The library in that folder');
+      return { kind: 'library', books: (await scanBooks(p)).length, shelves: Array.isArray(raw.shelves) ? raw.shelves.length : 0 };
+    }
+    return { kind: entries.length ? 'other' : 'empty', books: 0, shelves: 0 };
+  }
+
+  async function inspectFolder() {
+    const r = await checkFolder();
+    return { path: pickedFolder, name: path.basename(pickedFolder) || pickedFolder, ...r };
+  }
+
+  async function libraryInfo() {
+    const root = await libraryRoot();
+    const { lib } = await readLibrary(root);
+    const books = await scanBooks(root);
+    return { path: root, books: books.length, shelves: Math.max(1, lib.shelves.length) };
+  }
+
+  const rmQuiet = (dir) => fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+
+  async function applyFolder(mode) {
+    if (relocating) throw new Error('A library change is already running. Wait for it to finish.');
+    if (!['move', 'fresh', 'open'].includes(mode)) throw new Error('Unknown action');
+    relocating = true;
+    try {
+      const dest = pickedFolder;
+      const found = await checkFolder();
+      const notes = [];
+      let moved = 0;
+
+      if (mode === 'open') {
+        if (found.kind !== 'library') throw new Error('There is no emWriter library in that folder (no library.json). Nothing was changed.');
+      } else if (found.kind === 'library') {
+        throw new Error('That folder already holds a library. Choose “Open an existing library” instead. Nothing was changed.');
+      } else if (mode === 'fresh') {
+        await writeLibrary(dest, { formatVersion: FORMAT_VERSION, migrated: true, shelves: [{ id: randomUUID(), name: 'My Books', books: [] }], bookMeta: {} });
+      } else {
+        const srcRoot = await libraryRoot();
+        const { lib } = await readLibrary(srcRoot);
+        const books = await scanBooks(srcRoot);
+        const made = [];
+        const rollback = async () => { for (const d of made) await rmQuiet(d); await rmQuiet(libFile(dest)); };
+        for (const b of books) {
+          const folder = await uniqueFolder(dest, b.folder.slice(0, -EXT.length));
+          const to = path.join(dest, folder);
+          made.push(to);
+          let ok = false;
+          try { await fs.cp(b.dir, to, { recursive: true, errorOnExist: true }); ok = await verifyCopy(b.dir, to, b.newerFormat); } catch { ok = false; }
+          if (!ok) {
+            await rollback();
+            throw new Error('“' + b.title + '” could not be copied and checked. Nothing was moved and all your books are still where they were.');
+          }
+        }
+        try { await writeLibrary(dest, { ...lib, formatVersion: FORMAT_VERSION, migrated: true }); }
+        catch { await rollback(); throw new Error('The library file could not be written in the new folder. Nothing was moved.'); }
+        moved = books.length;
+        // From here on the copies are good. Originals go to the OS trash, so even now nothing is lost.
+        // Settings first: if that fails we undo and the originals are still untouched.
+        try { await setSetting('libraryPath', dest); }
+        catch { await rollback(); throw new Error('The new location could not be saved. Nothing was moved.'); }
+        open = null;
+        for (const b of books) {
+          try { await shell.trashItem(b.dir); }
+          catch { notes.push('“' + b.title + '” was copied but the original could not be removed from ' + srcRoot + '.'); }
+        }
+        return { mode, path: dest, moved, notes };
+      }
+
+      await setSetting('libraryPath', dest);
+      open = null;
+      // The last-opened id belongs to the other library.
+      try { await setSetting('lastBookId', null); } catch { /* not critical */ }
+      return { mode, path: dest, moved, notes };
+    } finally { relocating = false; }
+  }
+
   // ---- IPC --------------------------------------------------------------------------------
   function register(ipcMain) {
     const h = (name, fn) => ipcMain.handle(name, (_e, ...args) => fn(...args));
@@ -510,6 +640,15 @@ function create({ app, dialog, shell, writeAtomic }) {
       if (r.canceled || !r.filePaths[0]) return null;
       pickedFolder = r.filePaths[0];
       return pickedFolder;
+    });
+    h('library:inspect-folder', inspectFolder);
+    h('library:apply-folder', applyFolder);
+    h('library:info', libraryInfo);
+    h('library:reveal', async () => {
+      const root = await libraryRoot();
+      // Select library.json when there is one so the folder opens; otherwise open the folder itself.
+      try { await fs.access(libFile(root)); shell.showItemInFolder(libFile(root)); } catch { await shell.openPath(root); }
+      return true;
     });
     // Blocking read so the page can set theme, accent and zoom before its first paint.
     ipcMain.on('settings:get-sync', (e) => { e.returnValue = { ...loadSettingsSync() }; });

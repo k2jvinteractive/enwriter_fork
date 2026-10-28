@@ -1,7 +1,7 @@
 {
   "name": "emWriter",
   "productName": "emWriter",
-  "version": "0.5.0",
+  "version": "0.5.2",
   "description": "\u2014Writer",
   "main": "src/main.js",
   "author": "Stixhi Stishi",

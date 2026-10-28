@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   loadNovel: () => ipcRenderer.invoke('novel:load'),
@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld('api', {
   deleteBook: (id) => ipcRenderer.invoke('book:delete', id),
   revealBook: (id) => ipcRenderer.invoke('book:reveal', id),
   chooseLibraryFolder: () => ipcRenderer.invoke('library:choose-folder'),
+  settingsSync: () => ipcRenderer.sendSync('settings:get-sync'),
+  setZoom: (factor) => { if (typeof factor === 'number' && factor >= 0.5 && factor <= 2) webFrame.setZoomFactor(factor); },
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSetting: (key, value) => ipcRenderer.invoke('settings:set', key, value),
   onBeforeClose: (cb) => ipcRenderer.on('before-close', () => cb()),

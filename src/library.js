@@ -18,35 +18,70 @@ const ID_RE = /^[\w-]+$/;
 const EXT = '.mwt';
 
 function create({ app, dialog, shell, writeAtomic }) {
-  // ---- settings.json (the Settings UI arrives in part 5b; only the file lives here) -------
+  // ---- settings.json -------------------------------------------------------------------------
+  // Lives in userData, never in the library: the library's own location is a setting.
+  // DEFAULTS is mirrored in renderer/settings.js; saved values are merged over it, so a setting
+  // added in a later version appears automatically for people with an older file.
+  const DEFAULTS = {
+    libraryPath: null,
+    lastBookId: null,
+    penName: '',
+    theme: 'dark',        // 'dark' | 'light' | 'system'
+    accent: '#e8caa4',
+    uiScale: 100,         // percent
+    reduceMotion: null    // null = follow the OS
+  };
+
   const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
   let settings = null;
   // The folder the user last picked in the native dialog. settings:set only accepts a
   // libraryPath equal to this, so the renderer can never invent a path.
   let pickedFolder = null;
 
-  async function loadSettings() {
-    if (settings) return settings;
-    try { settings = JSON.parse(await fs.readFile(settingsFile(), 'utf8')) || {}; } catch { settings = {}; }
-    if (typeof settings !== 'object' || Array.isArray(settings)) settings = {};
-    return settings;
-  }
-
   const SETTING_RULES = {
     libraryPath: (v) => v === null || (typeof v === 'string' && v === pickedFolder),
-    lastBookId: (v) => v === null || (typeof v === 'string' && ID_RE.test(v))
+    lastBookId: (v) => v === null || (typeof v === 'string' && ID_RE.test(v)),
+    penName: (v) => typeof v === 'string' && v.length <= 100,
+    theme: (v) => ['dark', 'light', 'system'].includes(v),
+    accent: (v) => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v),
+    uiScale: (v) => [90, 100, 110, 125].includes(v),
+    reduceMotion: (v) => v === null || typeof v === 'boolean'
   };
 
-  async function setSetting(key, value) {
-    const s = await loadSettings();
-    // Unknown keys are allowed only if they look like plain data; known keys have stricter rules.
-    if (typeof key !== 'string' || !ID_RE.test(key) || key === '__proto__') throw new Error('Invalid setting key');
-    const rule = SETTING_RULES[key];
-    if (rule && !rule(value)) throw new Error('Invalid value for ' + key);
-    if (!rule && JSON.stringify(value) === undefined) throw new Error('Invalid setting value');
+  // Keep only known keys whose values pass validation; anything else falls back to the default.
+  // A hand-edited or corrupt file therefore can never put a bad value into the app.
+  function merged(saved) {
+    const out = { ...DEFAULTS };
+    if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+      for (const k of Object.keys(DEFAULTS)) {
+        if (k in saved && k !== 'libraryPath' && SETTING_RULES[k](saved[k])) out[k] = saved[k];
+      }
+      // libraryPath is validated against the dialog pick only when *set*; a stored path is trusted.
+      if (typeof saved.libraryPath === 'string' && path.isAbsolute(saved.libraryPath)) out.libraryPath = saved.libraryPath;
+    }
+    return out;
+  }
+
+  function loadSettingsSync() {
+    if (settings) return settings;
+    let saved = null;
+    try { saved = JSON.parse(require('node:fs').readFileSync(settingsFile(), 'utf8')); } catch { /* missing or corrupt: defaults */ }
+    settings = merged(saved);
+    return settings;
+  }
+  const loadSettings = async () => loadSettingsSync();
+
+  // One write at a time: writeAtomic uses a fixed temp name, so overlapping writes would clash.
+  let writeChain = Promise.resolve();
+
+  function setSetting(key, value) {
+    if (typeof key !== 'string' || !Object.prototype.hasOwnProperty.call(DEFAULTS, key)) return Promise.reject(new Error('Unknown setting'));
+    if (!SETTING_RULES[key](value)) return Promise.reject(new Error('Invalid value for ' + key));
+    const s = loadSettingsSync();
     s[key] = value;
-    await writeAtomic(settingsFile(), JSON.stringify(s, null, 2));
-    return s;
+    const snapshot = JSON.stringify(s, null, 2);
+    writeChain = writeChain.catch(() => {}).then(() => writeAtomic(settingsFile(), snapshot));
+    return writeChain.then(() => ({ ...s }));
   }
 
   // ---- library location -------------------------------------------------------------------
@@ -399,7 +434,9 @@ function create({ app, dialog, shell, writeAtomic }) {
       pickedFolder = r.filePaths[0];
       return pickedFolder;
     });
-    h('settings:get', loadSettings);
+    // Blocking read so the page can set theme, accent and zoom before its first paint.
+    ipcMain.on('settings:get-sync', (e) => { e.returnValue = { ...loadSettingsSync() }; });
+    h('settings:get', async () => ({ ...(await loadSettings()) }));
     h('settings:set', setSetting);
   }
 

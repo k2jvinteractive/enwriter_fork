@@ -125,6 +125,8 @@
       ['New scene', 'Ctrl+Shift+N', 'newScene'],
       ['Save', 'Ctrl+S', 'save'],
       null,
+      ['Settings…', 'Ctrl+,', 'openSettings'],
+      null,
       ['Delete current chapter or scene', '', 'deleteCurrent']
     ]],
     ['Edit', [

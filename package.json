@@ -4,7 +4,7 @@
   "version": "0.6.3",
   "description": "\u2014Writer",
   "main": "src/main.js",
-  "author": "Stixhi Stishi",
+  "author": "Stixhi Stishi <kineticstishi19@gmail.com>",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
@@ -12,7 +12,7 @@
     "dist": "electron-builder"
   },
   "build": {
-    "appId": "com.example.emwriter",
+    "appId": "com.stixhi.emwriter",
     "productName": "emWriter",
     "files": [
       "src/**/*"

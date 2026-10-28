@@ -180,6 +180,8 @@
     if (pendingSize) { fixFontSizes(pendingSize); pendingSize = null; }
     updateEmpty();
     if (e.inputType === 'insertText' && e.data === '-') dashToEmDash();
+    // Every input event goes in: smartText also uses them to end its "Backspace reverts" window.
+    if (emw.smartText) emw.smartText.apply(e, editor);
     if (typewriter) requestAnimationFrame(centerCaret);
   });
 

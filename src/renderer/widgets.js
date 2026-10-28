@@ -275,7 +275,10 @@
     colorIn.addEventListener('change', () => run('foreColor', colorIn.value, true));
     file.addEventListener('change', () => { if (file.files[0]) insertImage(file.files[0]); file.value = ''; });
 
-    area.addEventListener('input', () => onInput && onInput());
+    area.addEventListener('input', (e) => {
+      if (emw.smartText) emw.smartText.apply(e, area);   // before onInput, so listeners see the final text
+      if (onInput) onInput();
+    });
     area.addEventListener('paste', (e) => {
       const img = [...(e.clipboardData.files || [])].find((f) => f.type.startsWith('image/'));
       e.preventDefault();

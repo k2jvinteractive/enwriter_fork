@@ -28,9 +28,9 @@
       entries.get(key)[strong ? 'strong' : 'weak'].add(id);
     };
     for (const e of S.data[kind]) {
-      const name = e.name.trim();
+      const name = straight(e.name.trim());
       if (name.length >= 2) add(name, e.id, true);
-      for (const a of e.aliases || []) if (a.trim().length >= 2) add(a.trim(), e.id, true);
+      for (const a of e.aliases || []) if (straight(a).trim().length >= 2) add(straight(a).trim(), e.id, true);
       const words = name.split(/\s+/);
       if (words.length > 1) {
         for (const w of words) {
@@ -57,8 +57,13 @@
     return matchers[kind];
   }
 
+  // Smart text turns ' and " into curly marks; names are stored with straight ones (O'Brien),
+  // so compare on straight punctuation or detection would silently stop working.
+  const straight = (s) => s.replace(/[\u2018\u2019\u201A\u2039\u203A]/g, "'").replace(/[\u201C\u201D\u201E\u00AB\u00BB]/g, '"');
+
   function detect(kind, text) {
     if (!S.data[kind].length || !text.trim()) return [];
+    text = straight(text);
     const m = matcherFor(kind);
     const hits = [];   // { entry, index }
     for (const re of [m.ci, m.cs]) {

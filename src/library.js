@@ -1,0 +1,409 @@
+'use strict';
+// Library and .mwt package storage (main process only).
+//
+//   <library>/library.json            { formatVersion, migrated, shelves[], bookMeta{} }
+//   <library>/<Title>.mwt/book.json   today's index.json
+//   <library>/<Title>.mwt/Files/      <id>.html, thumb-<id>, darling-<id>
+//   <library>/<Title>.mwt/Meta/       info.json, optional cover.webp
+//
+// The renderer only ever sees book ids. Folder names and absolute paths stay in here, so a
+// compromised renderer cannot point us at an arbitrary location.
+
+const path = require('node:path');
+const fs = require('node:fs/promises');
+const { randomUUID } = require('node:crypto');
+
+const FORMAT_VERSION = 1;
+const ID_RE = /^[\w-]+$/;
+const EXT = '.mwt';
+
+function create({ app, dialog, shell, writeAtomic }) {
+  // ---- settings.json (the Settings UI arrives in part 5b; only the file lives here) -------
+  const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
+  let settings = null;
+  // The folder the user last picked in the native dialog. settings:set only accepts a
+  // libraryPath equal to this, so the renderer can never invent a path.
+  let pickedFolder = null;
+
+  async function loadSettings() {
+    if (settings) return settings;
+    try { settings = JSON.parse(await fs.readFile(settingsFile(), 'utf8')) || {}; } catch { settings = {}; }
+    if (typeof settings !== 'object' || Array.isArray(settings)) settings = {};
+    return settings;
+  }
+
+  const SETTING_RULES = {
+    libraryPath: (v) => v === null || (typeof v === 'string' && v === pickedFolder),
+    lastBookId: (v) => v === null || (typeof v === 'string' && ID_RE.test(v))
+  };
+
+  async function setSetting(key, value) {
+    const s = await loadSettings();
+    // Unknown keys are allowed only if they look like plain data; known keys have stricter rules.
+    if (typeof key !== 'string' || !ID_RE.test(key) || key === '__proto__') throw new Error('Invalid setting key');
+    const rule = SETTING_RULES[key];
+    if (rule && !rule(value)) throw new Error('Invalid value for ' + key);
+    if (!rule && JSON.stringify(value) === undefined) throw new Error('Invalid setting value');
+    s[key] = value;
+    await writeAtomic(settingsFile(), JSON.stringify(s, null, 2));
+    return s;
+  }
+
+  // ---- library location -------------------------------------------------------------------
+  async function libraryRoot() {
+    const s = await loadSettings();
+    const dir = (typeof s.libraryPath === 'string' && path.isAbsolute(s.libraryPath))
+      ? s.libraryPath
+      : path.join(app.getPath('documents'), 'emWriter');
+    await fs.mkdir(dir, { recursive: true });
+    return dir;
+  }
+
+  const libFile = (root) => path.join(root, 'library.json');
+
+  // True only if `child` resolves strictly inside `root`.
+  function inside(root, child) {
+    const rel = path.relative(path.resolve(root), path.resolve(child));
+    return !!rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+  }
+
+  function checkVersion(obj, what) {
+    const v = obj && obj.formatVersion;
+    if (typeof v === 'number' && v > FORMAT_VERSION) {
+      const err = new Error(`${what} was made by a newer version of emWriter (format ${v}). Update emWriter to open it. Nothing was changed.`);
+      err.code = 'NEWER_FORMAT';
+      throw err;
+    }
+  }
+
+  async function readJson(file) {
+    try { return JSON.parse(await fs.readFile(file, 'utf8')); } catch { return null; }
+  }
+
+  // ---- the open book ----------------------------------------------------------------------
+  let open = null;   // { id, dir }
+
+  function requireOpen() {
+    if (!open) throw new Error('No book is open');
+    return open;
+  }
+  const bookJson = () => path.join(requireOpen().dir, 'book.json');
+  const filesDir = () => path.join(requireOpen().dir, 'Files');
+  const fileFor = (id) => {
+    if (typeof id !== 'string' || !ID_RE.test(id)) throw new Error('Invalid chapter id');
+    return path.join(filesDir(), id + '.html');
+  };
+
+  // ---- scanning packages ------------------------------------------------------------------
+  // Packages are the truth; library.json only adds shelves, order and colour on top.
+  async function scanBooks(root) {
+    const books = [];
+    let entries = [];
+    try { entries = await fs.readdir(root, { withFileTypes: true }); } catch { /* empty */ }
+    for (const ent of entries) {
+      if (!ent.isDirectory() || !ent.name.toLowerCase().endsWith(EXT)) continue;
+      const dir = path.join(root, ent.name);
+      const info = await readJson(path.join(dir, 'Meta', 'info.json'));
+      if (!info || typeof info.bookId !== 'string' || !ID_RE.test(info.bookId)) continue;
+      let newer = false;
+      try { checkVersion(info, ent.name); } catch { newer = true; }
+      const book = newer ? null : await readJson(path.join(dir, 'book.json'));
+      let hasCover = false;
+      try { await fs.access(path.join(dir, 'Meta', 'cover.webp')); hasCover = true; } catch { /* none */ }
+      books.push({
+        id: info.bookId,
+        folder: ent.name,
+        dir,
+        title: (book && book.title) || ent.name.slice(0, -EXT.length),
+        created: info.created || null,
+        hasCover,
+        newerFormat: newer
+      });
+    }
+    return books;
+  }
+
+  async function findBook(id) {
+    if (typeof id !== 'string' || !ID_RE.test(id)) throw new Error('Invalid book id');
+    const root = await libraryRoot();
+    const hit = (await scanBooks(root)).find((b) => b.id === id);
+    if (!hit) throw new Error('Book not found');
+    if (!inside(root, hit.dir)) throw new Error('Book is outside the library');
+    return { root, book: hit };
+  }
+
+  // ---- library.json -----------------------------------------------------------------------
+  async function readLibrary(root) {
+    const raw = await readJson(libFile(root));
+    if (raw) checkVersion(raw, 'The library');
+    const lib = {
+      formatVersion: FORMAT_VERSION,
+      migrated: !!(raw && raw.migrated),
+      shelves: Array.isArray(raw && raw.shelves) ? raw.shelves : [],
+      bookMeta: (raw && typeof raw.bookMeta === 'object' && raw.bookMeta) || {}
+    };
+    return { lib, existed: !!raw };
+  }
+
+  const writeLibrary = (root, lib) => writeAtomic(libFile(root), JSON.stringify(lib, null, 2));
+
+  // Make the shelves agree with what is on disk: drop missing books, append unshelved ones.
+  function reconcile(lib, books) {
+    const ids = new Set(books.map((b) => b.id));
+    const seen = new Set();
+    let changed = false;
+    if (!lib.shelves.length) { lib.shelves.push({ id: randomUUID(), name: 'My Books', books: [] }); changed = true; }
+    for (const sh of lib.shelves) {
+      if (!Array.isArray(sh.books)) { sh.books = []; changed = true; }
+      const kept = sh.books.filter((id) => ids.has(id) && !seen.has(id) && seen.add(id));
+      if (kept.length !== sh.books.length) changed = true;
+      sh.books = kept;
+    }
+    for (const b of books) {
+      if (!seen.has(b.id)) { lib.shelves[0].books.push(b.id); changed = true; }
+    }
+    return changed;
+  }
+
+  function publicBook(b, meta) {
+    return { id: b.id, title: b.title, created: b.created, hasCover: b.hasCover,
+      color: (meta && typeof meta.color === 'string') ? meta.color : null, newerFormat: b.newerFormat };
+  }
+
+  let migrationNotice = null;
+
+  async function getLibrary(consumeNotice = false) {
+    const root = await libraryRoot();
+    const { lib, existed } = await readLibrary(root);
+    await migrateIfNeeded(root, lib);
+    const books = await scanBooks(root);
+    if (reconcile(lib, books) || !existed) await writeLibrary(root, lib);
+    // Only the renderer-facing library:get consumes the notice, so the internal call made by
+    // novel:load cannot swallow it before the person sees it.
+    const notice = migrationNotice;
+    if (consumeNotice) migrationNotice = null;
+    return {
+      formatVersion: FORMAT_VERSION,
+      shelves: lib.shelves,
+      books: books.map((b) => publicBook(b, lib.bookMeta[b.id])),
+      migrationNotice: notice
+    };
+  }
+
+  // Accepts only the fields the renderer may change, with strict shape checks.
+  async function putLibrary(input) {
+    const root = await libraryRoot();
+    const { lib } = await readLibrary(root);
+    const books = await scanBooks(root);
+    const ids = new Set(books.map((b) => b.id));
+    if (!input || !Array.isArray(input.shelves) || input.shelves.length > 200) throw new Error('Invalid library');
+    const shelves = input.shelves.map((sh) => {
+      if (!sh || typeof sh.id !== 'string' || !ID_RE.test(sh.id)) throw new Error('Invalid shelf id');
+      const name = typeof sh.name === 'string' ? sh.name.slice(0, 200) : 'Shelf';
+      const list = Array.isArray(sh.books) ? sh.books.filter((id) => typeof id === 'string' && ID_RE.test(id) && ids.has(id)) : [];
+      return { id: sh.id, name, books: list };
+    });
+    lib.shelves = shelves;
+    if (input.bookMeta && typeof input.bookMeta === 'object') {
+      const meta = {};
+      for (const [id, m] of Object.entries(input.bookMeta)) {
+        if (!ids.has(id) || !m || typeof m !== 'object') continue;
+        meta[id] = { color: typeof m.color === 'string' && /^#[0-9a-f]{3,8}$/i.test(m.color) ? m.color : null };
+      }
+      lib.bookMeta = meta;
+    }
+    reconcile(lib, books);   // never lose a book because the renderer forgot to shelve it
+    await writeLibrary(root, lib);
+    return true;
+  }
+
+  // ---- creating, renaming, trashing --------------------------------------------------------
+  const FORBIDDEN = /[<>:"/\\|?*\u0000-\u001f]/g;
+  function folderBase(title) {
+    const t = String(title || '').replace(FORBIDDEN, ' ').replace(/\s+/g, ' ').trim().replace(/^\.+|\.+$/g, '').slice(0, 80);
+    return t || 'Untitled Novel';
+  }
+
+  async function uniqueFolder(root, title) {
+    const base = folderBase(title);
+    for (let n = 1; n < 1000; n++) {
+      const name = (n === 1 ? base : `${base} ${n}`) + EXT;
+      try { await fs.access(path.join(root, name)); } catch { return name; }
+    }
+    return `${base} ${randomUUID().slice(0, 8)}${EXT}`;
+  }
+
+  function newBookData(title) {
+    const first = { id: randomUUID(), title: 'Chapter 1', words: 0, synopsis: '' };
+    return { first, index: { title, chapters: [first] } };
+  }
+
+  async function writeInfo(dir, bookId, created) {
+    await writeAtomic(path.join(dir, 'Meta', 'info.json'), JSON.stringify({
+      formatVersion: FORMAT_VERSION, bookId, created: created || new Date().toISOString(), appVersion: app.getVersion()
+    }, null, 2));
+  }
+
+  async function createBook(title) {
+    const root = await libraryRoot();
+    const clean = (typeof title === 'string' && title.trim()) ? title.trim().slice(0, 200) : 'Untitled Novel';
+    const folder = await uniqueFolder(root, clean);
+    const dir = path.join(root, folder);
+    if (!inside(root, dir)) throw new Error('Invalid book name');
+    const id = randomUUID();
+    await fs.mkdir(path.join(dir, 'Files'), { recursive: true });
+    await fs.mkdir(path.join(dir, 'Meta'), { recursive: true });
+    const { first, index } = newBookData(clean);
+    await writeAtomic(path.join(dir, 'Files', first.id + '.html'), '');
+    await writeAtomic(path.join(dir, 'book.json'), JSON.stringify(index, null, 2));
+    await writeInfo(dir, id);
+    const { lib } = await readLibrary(root);
+    reconcile(lib, await scanBooks(root));
+    await writeLibrary(root, lib);
+    return { id, title: clean };
+  }
+
+  async function renameBook(id, title) {
+    const { root, book } = await findBook(id);
+    if (book.newerFormat) throw new Error('This book needs a newer emWriter. Nothing was changed.');
+    const clean = String(title || '').trim().slice(0, 200);
+    if (!clean) throw new Error('A book needs a title');
+    const data = (await readJson(path.join(book.dir, 'book.json'))) || {};
+    data.title = clean;
+    await writeAtomic(path.join(book.dir, 'book.json'), JSON.stringify(data, null, 2));
+    // Move the folder too, unless the name would not change.
+    let dir = book.dir;
+    if (folderBase(clean) + EXT !== book.folder) {
+      const folder = await uniqueFolder(root, clean);
+      const next = path.join(root, folder);
+      if (!inside(root, next)) throw new Error('Invalid book name');
+      await fs.rename(book.dir, next);
+      dir = next;
+    }
+    if (open && open.id === id) open.dir = dir;
+    return { id, title: clean };
+  }
+
+  async function deleteBook(id) {
+    const { root, book } = await findBook(id);
+    if (open && open.id === id) open = null;
+    await shell.trashItem(book.dir);   // OS trash, never fs.rm: the user can always get it back
+    const { lib } = await readLibrary(root);
+    reconcile(lib, await scanBooks(root));
+    delete lib.bookMeta[id];
+    await writeLibrary(root, lib);
+    return true;
+  }
+
+  async function openBook(id) {
+    const { book } = await findBook(id);
+    const info = await readJson(path.join(book.dir, 'Meta', 'info.json'));
+    checkVersion(info, book.folder);
+    const data = await readJson(path.join(book.dir, 'book.json'));
+    if (data) checkVersion(data, book.folder);
+    open = { id: book.id, dir: book.dir };
+    try { await setSetting('lastBookId', book.id); } catch { /* not critical */ }
+    return { id: book.id, title: book.title };
+  }
+
+  // ---- renderer-facing novel:load / writes (same channels as before) -----------------------
+  async function loadNovel() {
+    if (!open) {
+      // Old renderer code just calls novel:load: open the last book, else the first, else make one.
+      const lib = await getLibrary();
+      const s = await loadSettings();
+      const usable = lib.books.filter((b) => !b.newerFormat);
+      let pick = usable.find((b) => b.id === s.lastBookId) || usable[0];
+      if (!pick) {
+        if (lib.books.length) throw Object.assign(new Error('Every book in the library needs a newer emWriter.'), { code: 'NEWER_FORMAT' });
+        pick = await createBook('Untitled Novel');
+      }
+      await openBook(pick.id);
+    }
+    const { dir } = requireOpen();
+    await fs.mkdir(path.join(dir, 'Files'), { recursive: true });
+    const data = await readJson(path.join(dir, 'book.json'));
+    if (data) { checkVersion(data, 'This book'); return data; }
+    const { first, index } = newBookData('Untitled Novel');
+    await writeAtomic(path.join(dir, 'Files', first.id + '.html'), '');
+    await writeAtomic(path.join(dir, 'book.json'), JSON.stringify(index, null, 2));
+    return index;
+  }
+
+  async function writeIndex(index) {
+    if (!index || typeof index !== 'object') throw new Error('Invalid book data');
+    return writeAtomic(bookJson(), JSON.stringify(index, null, 2));
+  }
+
+  // ---- one-time migration of userData/novel ------------------------------------------------
+  async function migrateIfNeeded(root, lib) {
+    if (lib.migrated) return;
+    const old = path.join(app.getPath('userData'), 'novel');
+    let hasOld = false;
+    try { hasOld = (await fs.stat(old)).isDirectory(); } catch { /* nothing to migrate */ }
+    const books = await scanBooks(root);
+    if (hasOld && !books.length) {
+      try {
+        const index = await readJson(path.join(old, 'index.json'));
+        if (index) {
+          const title = (index.title && String(index.title).trim()) || 'Untitled Novel';
+          const folder = await uniqueFolder(root, title);
+          const dir = path.join(root, folder);
+          await fs.mkdir(path.join(dir, 'Meta'), { recursive: true });
+          // Copy, never move: the original stays as a backup.
+          try { await fs.cp(path.join(old, 'chapters'), path.join(dir, 'Files'), { recursive: true }); }
+          catch { await fs.mkdir(path.join(dir, 'Files'), { recursive: true }); }
+          await writeAtomic(path.join(dir, 'book.json'), JSON.stringify(index, null, 2));
+          await writeInfo(dir, randomUUID());
+          migrationNotice = `Your book “${title}” now lives in your library at ${root}. The original was left untouched.`;
+        }
+      } catch {
+        // Copy failed half way: leave the flag unset so it is retried next launch.
+        return;
+      }
+    }
+    lib.migrated = true;
+    reconcile(lib, await scanBooks(root));
+    await writeLibrary(root, lib);
+  }
+
+  // ---- IPC --------------------------------------------------------------------------------
+  function register(ipcMain) {
+    const h = (name, fn) => ipcMain.handle(name, (_e, ...args) => fn(...args));
+
+    h('novel:load', loadNovel);
+    h('index:write', writeIndex);
+    h('chapter:read', async (id) => { try { return await fs.readFile(fileFor(id), 'utf8'); } catch { return ''; } });
+    h('chapter:write', (id, html) => {
+      if (typeof html !== 'string') throw new Error('Invalid content');
+      return writeAtomic(fileFor(id), html);
+    });
+    h('chapter:create', async () => {
+      const id = randomUUID();
+      await writeAtomic(fileFor(id), '');
+      return id;
+    });
+    h('chapter:delete', (id) => fs.rm(fileFor(id), { force: true }));
+
+    h('library:get', () => getLibrary(true));
+    h('library:write', putLibrary);
+    h('book:create', createBook);
+    h('book:open', openBook);
+    h('book:close', async () => { open = null; return true; });
+    h('book:rename', renameBook);
+    h('book:delete', deleteBook);
+    h('book:reveal', async (id) => { const { book } = await findBook(id); shell.showItemInFolder(book.dir); return true; });
+    h('library:choose-folder', async () => {
+      const r = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
+      if (r.canceled || !r.filePaths[0]) return null;
+      pickedFolder = r.filePaths[0];
+      return pickedFolder;
+    });
+    h('settings:get', loadSettings);
+    h('settings:set', setSetting);
+  }
+
+  return { register };
+}
+
+module.exports = { create, FORMAT_VERSION };

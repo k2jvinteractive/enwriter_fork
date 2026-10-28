@@ -520,6 +520,8 @@
   // ---- start ---------------------------------------------------------------------------------
   (async function init() {
     S.load(await window.api.loadNovel());
+    // One-time notice after the library migration (library:get reports it once).
+    try { const l = await window.api.getLibrary(); if (l && l.migrationNotice) emw.toast(l.migrationNotice, { ms: 12000 }); } catch { /* ignore */ }
     await migrateChapterText();
     novelTitleEl.value = S.data.title;
     let last = '';

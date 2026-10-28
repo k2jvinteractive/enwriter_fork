@@ -1,20 +1,12 @@
-const { app, BrowserWindow, Menu, ipcMain, nativeTheme } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, nativeTheme, dialog, shell } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
-const { randomUUID } = require('node:crypto');
+const library = require('./library');
 
 nativeTheme.themeSource = 'dark';
 
-// Storage layout (in the OS user-data folder):
-//   novel/index.json           title + ordered chapter list (small, fast to load)
-//   novel/chapters/<id>.html   one file per chapter
-const root = () => path.join(app.getPath('userData'), 'novel');
-const chaptersDir = () => path.join(root(), 'chapters');
-const indexFile = () => path.join(root(), 'index.json');
-const chapterFile = (id) => {
-  if (!/^[\w-]+$/.test(id)) throw new Error('Invalid chapter id');
-  return path.join(chaptersDir(), id + '.html');
-};
+// Storage now lives in a library of .mwt packages (see library.js). The existing channels
+// (novel:load, index:write, chapter:*) still work, against whichever book is open.
 
 // Write to a temp file, then rename, so a crash never leaves a half-written file.
 async function writeAtomic(file, data) {
@@ -23,33 +15,8 @@ async function writeAtomic(file, data) {
   await fs.rename(tmp, file);
 }
 
-async function loadNovel() {
-  await fs.mkdir(chaptersDir(), { recursive: true });
-  try {
-    return JSON.parse(await fs.readFile(indexFile(), 'utf8'));
-  } catch {
-    const first = { id: randomUUID(), title: 'Chapter 1', words: 0, synopsis: '' };
-    const index = { title: 'Untitled Novel', chapters: [first] };
-    await writeAtomic(chapterFile(first.id), '');
-    await writeAtomic(indexFile(), JSON.stringify(index, null, 2));
-    return index;
-  }
-}
-
 function registerIpc() {
-  ipcMain.handle('novel:load', loadNovel);
-  ipcMain.handle('index:write', (_e, index) =>
-    writeAtomic(indexFile(), JSON.stringify(index, null, 2)));
-  ipcMain.handle('chapter:read', async (_e, id) => {
-    try { return await fs.readFile(chapterFile(id), 'utf8'); } catch { return ''; }
-  });
-  ipcMain.handle('chapter:write', (_e, id, html) => writeAtomic(chapterFile(id), html));
-  ipcMain.handle('chapter:create', async () => {
-    const id = randomUUID();
-    await writeAtomic(chapterFile(id), '');
-    return id;
-  });
-  ipcMain.handle('chapter:delete', (_e, id) => fs.rm(chapterFile(id), { force: true }));
+  library.create({ app, dialog, shell, writeAtomic }).register(ipcMain);
 }
 
 function createWindow() {

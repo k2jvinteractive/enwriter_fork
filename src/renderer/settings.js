@@ -7,14 +7,24 @@
   const P = window.emwPrefs;
 
   // Mirrors DEFAULTS in library.js (main). Saved values are merged over this.
-  const DEFAULTS = { penName: '', theme: 'dark', accent: '#e8caa4', uiScale: 100, reduceMotion: null };
+  const DEFAULTS = {
+    penName: '', theme: 'dark', accent: '#e8caa4', uiScale: 100, reduceMotion: null,
+    // Writing and bottom bar (part 5d)
+    pageWidth: 'medium', writingFont: '', writingSize: 18, writingSpacing: 1.75,
+    smartQuotes: true, quoteStyle: 'en', autoEllipsis: true, autoHighlight: false,
+    typewriter: false, autosaveDelay: 600,
+    tabs: { order: ['home', 'places', 'characters', 'timeline', 'manuscript', 'darlings', 'notes', 'tags'], hidden: [] },
+    statsSide: 'right'
+  };
+  // Object defaults (tabs) are copied so nothing ever edits DEFAULTS in place.
+  const clone = (v) => (v && typeof v === 'object' ? JSON.parse(JSON.stringify(v)) : v);
 
   const ACCENTS = [
     ['Sand', '#e8caa4'], ['Amber', '#e5b567'], ['Coral', '#e58f72'], ['Rose', '#e39aa6'],
     ['Sage', '#a9c8a0'], ['Teal', '#8dd0c4'], ['Sky', '#8fb8e6'], ['Lavender', '#bba9e6']
   ];
 
-  let values = { ...DEFAULTS, ...(P ? P.current() : {}) };
+  let values = { ...clone(DEFAULTS), ...(P ? P.current() : {}) };
   const listeners = [];
   const pending = {};
   let timer = 0;
@@ -40,7 +50,7 @@
     listeners.forEach((cb) => { try { cb(key, value); } catch { /* a listener must not break saving */ } });
   }
 
-  function reset(keys) { keys.forEach((k) => set(k, DEFAULTS[k])); }
+  function reset(keys) { keys.forEach((k) => set(k, clone(DEFAULTS[k]))); }
 
   emw.flushHooks.push(flush);
 
@@ -52,7 +62,7 @@
     onChange: (cb) => listeners.push(cb),
     updateAccentInk: P ? P.updateAccentInk : () => {},
     addSection: (s) => { sections.push(s); if (nav) buildNav(); },
-    open: () => open(),
+    open: (id) => open(id),
     flush
   };
 
@@ -93,6 +103,9 @@
     b.addEventListener('click', () => { reset(keys); rerender(); });
     return b;
   }
+
+  // Shared with the sections other files add (writing-settings.js), so they look the same.
+  emw.settings.ui = { el, row, segmented, resetLink };
 
   // ---- built-in sections -----------------------------------------------------------------
   const sections = [
@@ -220,7 +233,7 @@
 
   function open(sectionId) {
     if (!dlg) build();
-    if (dlg.open) return;
+    if (dlg.open) { if (sectionId) showSection(sectionId); return; }
     showSection(sectionId || activeId);
     dlg.showModal();
     (nav.querySelector('[aria-selected="true"]') || nav.firstChild).focus();

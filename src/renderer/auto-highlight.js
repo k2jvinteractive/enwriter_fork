@@ -12,7 +12,7 @@
   const hiliteIn = $('#rb-hilite');
   if (!editor || !toggle || !hiliteIn || !emw.editor || !emw.editor.exec) return;
 
-  const KEY = 'emwriter.autohilite';   // moves to settings.json when Feature 5 lands
+  const OLD_KEY = 'emwriter.autohilite';   // before part 5d the toggle lived in localStorage
   const NAV = /^(Arrow(Left|Right|Up|Down)|Home|End|Page(Up|Down))$/;
   const DELAY = 250;
   const DBLCLICK_DELAY = 400;          // long enough for a third click to cancel the word highlight
@@ -25,14 +25,26 @@
   let shiftSelecting = false;
 
   // ---- persistence ---------------------------------------------------------
-  function setAuto(on) {
+  // The ribbon button and Settings > Writing share one saved value (settings.json).
+  function show(on) {
     auto = on;
     toggle.setAttribute('aria-pressed', String(on));
-    if (!on) cancel();
-    try { localStorage.setItem(KEY, on ? '1' : '0'); } catch { /* ignore */ }
+    if (!on) { clearTimeout(timer); timer = 0; }   // not cancel(): that const is declared further down
   }
-  try { auto = localStorage.getItem(KEY) === '1'; } catch { /* ignore */ }
-  toggle.setAttribute('aria-pressed', String(auto));
+  function setAuto(on) {
+    show(on);
+    if (emw.settings) emw.settings.set('autoHighlight', on);
+  }
+  // Carry an old "on" over once, then drop the key so it cannot override a later change.
+  try {
+    const old = localStorage.getItem(OLD_KEY);
+    if (old !== null) {
+      localStorage.removeItem(OLD_KEY);
+      if (old === '1' && emw.settings && !emw.settings.get('autoHighlight')) emw.settings.set('autoHighlight', true);
+    }
+  } catch { /* ignore */ }
+  show(!!(emw.settings && emw.settings.get('autoHighlight')));
+  if (emw.settings) emw.settings.onChange((key, value) => { if (key === 'autoHighlight' && !!value !== auto) show(!!value); });
   // Ribbon buttons already keep focus in the editor (see editor.js mousedown handler).
   toggle.addEventListener('click', () => setAuto(!auto));
 

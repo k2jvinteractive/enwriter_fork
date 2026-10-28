@@ -29,7 +29,22 @@ function create({ app, dialog, shell, writeAtomic }) {
     theme: 'dark',        // 'dark' | 'light' | 'system'
     accent: '#e8caa4',
     uiScale: 100,         // percent
-    reduceMotion: null    // null = follow the OS
+    reduceMotion: null,   // null = follow the OS
+    // Writing (part 5d)
+    pageWidth: 'medium',  // 'narrow' | 'medium' | 'wide'
+    writingFont: '',      // '' = the app's serif; applies to new text only
+    writingSize: 18,
+    writingSpacing: 1.75,
+    smartQuotes: true,
+    quoteStyle: 'en',     // 'en' | 'fr' | 'de'
+    autoEllipsis: true,
+    autoHighlight: false,
+    typewriter: false,
+    autosaveDelay: 600,   // ms
+    // Bottom bar (part 5d). Ids not listed in `order` are appended by the renderer, so tabs
+    // added in a later version show up on their own.
+    tabs: { order: ['home', 'places', 'characters', 'timeline', 'manuscript', 'darlings', 'notes', 'tags'], hidden: [] },
+    statsSide: 'right'    // 'left' | 'right'
   };
 
   const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
@@ -45,7 +60,25 @@ function create({ app, dialog, shell, writeAtomic }) {
     theme: (v) => ['dark', 'light', 'system'].includes(v),
     accent: (v) => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v),
     uiScale: (v) => [90, 100, 110, 125].includes(v),
-    reduceMotion: (v) => v === null || typeof v === 'boolean'
+    reduceMotion: (v) => v === null || typeof v === 'boolean',
+    pageWidth: (v) => ['narrow', 'medium', 'wide'].includes(v),
+    writingFont: (v) => typeof v === 'string' && v.length <= 100,
+    writingSize: (v) => Number.isInteger(v) && v >= 8 && v <= 96,
+    writingSpacing: (v) => [1, 1.15, 1.5, 1.75, 2, 2.5].includes(v),
+    smartQuotes: (v) => typeof v === 'boolean',
+    quoteStyle: (v) => ['en', 'fr', 'de'].includes(v),
+    autoEllipsis: (v) => typeof v === 'boolean',
+    autoHighlight: (v) => typeof v === 'boolean',
+    typewriter: (v) => typeof v === 'boolean',
+    autosaveDelay: (v) => Number.isInteger(v) && v >= 200 && v <= 2000,
+    // Only the shape is checked here; the renderer decides which ids it knows. Short plain
+    // ids keep a hand-edited file from smuggling anything odd into the DOM.
+    tabs: (v) => {
+      if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+      const ids = (a) => Array.isArray(a) && a.length <= 40 && a.every((x) => typeof x === 'string' && /^[a-z][a-z-]{0,30}$/.test(x));
+      return ids(v.order) && ids(v.hidden);
+    },
+    statsSide: (v) => v === 'left' || v === 'right'
   };
 
   // Keep only known keys whose values pass validation; anything else falls back to the default.

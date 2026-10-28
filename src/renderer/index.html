@@ -17,6 +17,7 @@
   <script src="smart-text.js" defer></script>
   <script src="editor.js" defer></script>
   <script src="auto-highlight.js" defer></script>
+  <script src="writing-settings.js" defer></script>
   <script src="widgets.js" defer></script>
   <script src="scene-dialog.js" defer></script>
   <script src="timeline.js" defer></script>
@@ -245,16 +246,9 @@
   </section>
 
   <footer class="tabbar">
-    <div class="tabbar-left"><button class="tab" type="button" data-view="home">Home</button></div>
-    <nav class="tabs" aria-label="Sections">
-      <button class="tab" type="button" data-view="places">Places</button>
-      <button class="tab" type="button" data-view="characters">Characters</button>
-      <button class="tab" type="button" data-view="timeline">Timeline</button>
-      <button class="tab" type="button" data-view="manuscript" aria-current="true">Manuscript</button>
-      <button class="tab" type="button" data-view="darlings">Darlings</button>
-      <button class="tab" type="button" data-view="notes">Notes</button>
-      <button class="tab" type="button" data-view="tags">Tags</button>
-    </nav>
+    <!-- The tab buttons are built from TABS in ui.js, in the order saved in settings. -->
+    <div class="tabbar-left" hidden></div>
+    <nav class="tabs" aria-label="Sections"></nav>
     <div id="stats" class="stats">
       <span id="st-words">0 words</span>
       <span id="st-save" class="save">Saved</span>

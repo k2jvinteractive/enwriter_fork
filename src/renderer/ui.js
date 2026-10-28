@@ -143,6 +143,14 @@
     ]],
     ['View', [
       ['Home', '', 'goHome'],
+      ['Manuscript', '', 'goManuscript'],
+      ['Timeline', '', 'goTimeline'],
+      ['Characters', '', 'goCharacters'],
+      ['Places', '', 'goPlaces'],
+      ['Darlings', '', 'goDarlings'],
+      ['Notes', '', 'goNotes'],
+      ['Tags', '', 'goTags'],
+      ['Customise bottom bar…', '', 'customiseBottomBar'],
       null,
       ['Pin chapters panel', 'Alt+1', 'toggleHierarchy'],
       ['Show ribbon', 'Alt+2', 'toggleRibbon'],
@@ -268,21 +276,91 @@
   applyPanels();
 
   // ---- Bottom tabs -----------------------------------------------------------------
-  const TITLES = {
-    home: 'Home', places: 'Places', characters: 'Characters', timeline: 'Timeline',
-    manuscript: 'Manuscript', darlings: 'Darlings', notes: 'Notes', tags: 'Tags'
-  };
+  // TABS is the single source of truth for the bar. Order and visibility come from
+  // settings.tabs; the buttons themselves are created once and only moved or detached, so other
+  // files (darlings.js makes the Darlings tab a drop target) keep working on the same elements.
+  const TABS = [
+    { id: 'home', label: 'Home', hideable: false },
+    { id: 'places', label: 'Places', hideable: true },
+    { id: 'characters', label: 'Characters', hideable: true },
+    { id: 'timeline', label: 'Timeline', hideable: true },
+    { id: 'manuscript', label: 'Manuscript', hideable: false },
+    { id: 'darlings', label: 'Darlings', hideable: true },
+    { id: 'notes', label: 'Notes', hideable: true },
+    { id: 'tags', label: 'Tags', hideable: true }
+  ];
+  const TITLES = Object.fromEntries(TABS.map((t) => [t.id, t.label]));
   const BUILT = ['home', 'manuscript', 'timeline', 'characters', 'places', 'notes', 'tags', 'darlings'];
   let currentView = 'home';
-  const tabs = $$('.tab[data-view]');
   const hasBook = () => !!(emw.book && emw.book.id);
+
+  // Turns whatever was saved into a complete, safe layout: unknown ids are dropped, duplicates
+  // collapse, ids missing from `order` are appended (so tabs added in a later version appear on
+  // their own), and tabs that cannot be hidden never are.
+  function normaliseTabs(cfg) {
+    const known = new Set(TABS.map((t) => t.id));
+    const order = [];
+    for (const id of (cfg && Array.isArray(cfg.order) ? cfg.order : [])) if (known.has(id) && !order.includes(id)) order.push(id);
+    for (const t of TABS) if (!order.includes(t.id)) order.push(t.id);
+    const locked = new Set(TABS.filter((t) => !t.hideable).map((t) => t.id));
+    const hidden = [];
+    for (const id of (cfg && Array.isArray(cfg.hidden) ? cfg.hidden : [])) if (known.has(id) && !locked.has(id) && !hidden.includes(id)) hidden.push(id);
+    return { order, hidden };
+  }
+
+  const tabbarEl = $('.tabbar');
+  const leftSlot = $('.tabbar-left');
+  const tabsNav = $('.tabs');
+  const tabEl = {};   // id -> the one button for that tab
+  for (const t of TABS) {
+    const b = document.createElement('button');
+    b.className = 'tab';
+    b.type = 'button';
+    b.dataset.view = t.id;
+    b.textContent = t.label;
+    b.addEventListener('click', () => { if (b.getAttribute('aria-disabled') !== 'true') showView(t.id); });
+    tabEl[t.id] = b;
+  }
+
+  // Lays the bar out from a config. Home keeps its place in the side column while it is first
+  // and the word count is on the right; otherwise it joins the other tabs. Hidden tabs are
+  // detached from the bar, not just hidden, so the grid and tab order never see them.
+  function applyTabs(cfg, statsSide) {
+    const { order, hidden } = normaliseTabs(cfg);
+    const side = statsSide === 'left' ? 'left' : 'right';
+    tabbarEl.dataset.stats = side;
+    const shown = order.filter((id) => !hidden.includes(id));
+    const homeInSide = side === 'right' && shown[0] === 'home';
+    leftSlot.replaceChildren(...(homeInSide ? [tabEl.home] : []));
+    leftSlot.hidden = !homeInSide;
+    tabsNav.replaceChildren(...shown.filter((id) => !(homeInSide && id === 'home')).map((id) => tabEl[id]));
+    refreshTabs();
+    for (const id in tabEl) tabEl[id].setAttribute('aria-current', String(id === currentView));
+    keepCurrentInView();
+  }
+
+  // In a narrow window all eight tabs may not fit in the middle column. The bar then scrolls
+  // sideways (mouse wheel works too) and the tab you are on is always brought into view.
+  function keepCurrentInView() {
+    const t = tabEl[currentView];
+    if (!t || t.parentElement !== tabsNav || tabsNav.scrollWidth <= tabsNav.clientWidth) return;
+    const box = tabsNav.getBoundingClientRect(), r = t.getBoundingClientRect();
+    if (r.left < box.left) tabsNav.scrollLeft -= box.left - r.left;
+    else if (r.right > box.right) tabsNav.scrollLeft += r.right - box.right;
+  }
+  tabsNav.addEventListener('wheel', (e) => {
+    if (tabsNav.scrollWidth <= tabsNav.clientWidth || !e.deltaY || e.deltaX) return;
+    e.preventDefault();
+    tabsNav.scrollLeft += e.deltaY;
+  }, { passive: false });
+  window.addEventListener('resize', keepCurrentInView);
 
   // With no book open only Home works; the other tabs are muted and ignore clicks.
   function refreshTabs() {
-    tabs.forEach((t) => {
-      if (t.dataset.view === 'home') return;
-      if (hasBook()) t.removeAttribute('aria-disabled'); else t.setAttribute('aria-disabled', 'true');
-    });
+    for (const id in tabEl) {
+      if (id === 'home') continue;
+      if (hasBook()) tabEl[id].removeAttribute('aria-disabled'); else tabEl[id].setAttribute('aria-disabled', 'true');
+    }
     $('#stats').hidden = currentView === 'home' || !hasBook();
   }
   emw.refreshTabs = refreshTabs;
@@ -295,13 +373,20 @@
     $('#blank').hidden = built;
     $('#stats').hidden = !built || name === 'home';   // each view decides which of its parts show (see darlings.js)
     $('#blank-title').textContent = TITLES[name];
-    tabs.forEach((t) => t.setAttribute('aria-current', String(t.dataset.view === name)));
+    for (const id in tabEl) tabEl[id].setAttribute('aria-current', String(id === name));
+    keepCurrentInView();
     emw.viewListeners.forEach((cb) => cb(name));
     if (name === 'manuscript') emw.editor?.focus();
   }
   emw.showView = showView;
-  tabs.forEach((t) => t.addEventListener('click', () => { if (t.getAttribute('aria-disabled') !== 'true') showView(t.dataset.view); }));
+  emw.tabbar = { TABS, normalise: normaliseTabs, apply: applyTabs };
   emw.actions.goHome = () => showView('home');
-  refreshTabs();
+  // A tab hidden from the bar is still one menu click away (View menu).
+  for (const t of TABS) if (t.id !== 'home') emw.actions['go' + t.label] = () => showView(t.id);
+
+  // First paint uses what boot.js read from settings.json; settings.js keeps it live afterwards.
+  let saved = {};
+  try { saved = (window.emwPrefs && window.emwPrefs.current()) || {}; } catch { /* defaults */ }
+  applyTabs(saved.tabs, saved.statsSide);
   showView('home');
 })();

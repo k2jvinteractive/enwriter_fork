@@ -23,7 +23,11 @@
   const pageEl = $('#page');
   const detectedEl = $('#insp-detected');
 
-  const SAVE_DELAY_MS = 600;
+  // Pause after the last keystroke before saving. Settings > Writing changes it (200 to 2000 ms).
+  const saveDelay = () => {
+    const v = emw.settings ? Number(emw.settings.get('autosaveDelay')) : 600;
+    return v >= 200 && v <= 2000 ? v : 600;
+  };
 
   let curId = null;          // id of the scene open in the editor (only scenes are writable)
   let curChapterId = null;   // id of the chapter whose overview is showing, when no scene is open
@@ -206,7 +210,7 @@
     timer = setTimeout(() => {
       if (dirtyText) { recount(); dirtyIndex = true; updateCounts(); syncDropcap(); }
       flush();
-    }, SAVE_DELAY_MS);
+    }, saveDelay());
   }
 
   // ---- opening a chapter or scene ------------------------------------------------------

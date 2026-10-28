@@ -115,7 +115,7 @@ input, select, textarea {
 .page { flex: 1; min-height: 0; overflow-y: auto; background: var(--page); display: flex; flex-direction: column; }
 .editor {
   flex: 1 0 auto;
-  padding: 44px max(40px, calc((100% - 70ch) / 2)) 40vh;
+  padding: 44px max(40px, calc((100% - var(--page-w, 70ch)) / 2)) 40vh;
   font: 18px/1.75 var(--serif);
   white-space: pre-wrap;
   tab-size: 2em;
@@ -161,12 +161,12 @@ input, select, textarea {
   background: var(--bg);
   border-top: 1px solid var(--line);
 }
-.tabbar-left { display: flex; padding-left: 4px; }
-.tabs { display: flex; justify-content: center; gap: 6px; min-width: 0; }
-.tab { padding: 0 14px; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink); }
+.tabbar-left { grid-column: 1; grid-row: 1; display: flex; padding-left: 4px; }
+.tabs { grid-column: 2; grid-row: 1; display: flex; justify-content: safe center; gap: 6px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.tab { flex: 0 1 auto; padding: 0 clamp(6px, 1.1vw, 14px); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink); }
 .tab:hover { background: var(--hover); }
 .tab[aria-current="true"] { color: var(--accent); }
-.stats { display: grid; grid-template-columns: 1fr auto; column-gap: 12px; align-content: center; padding: 0 14px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.stats { grid-column: 3; grid-row: 1; display: grid; grid-template-columns: 1fr auto; column-gap: 12px; align-content: center; padding: 0 14px; font-size: 12px; font-variant-numeric: tabular-nums; }
 .stats .total, .stats .save { color: var(--muted); }
 .stats .total { grid-column: 1 / -1; }
 
@@ -644,3 +644,26 @@ html[data-motion="reduce"] *, html[data-motion="reduce"] *::before, html[data-mo
 .tab[aria-disabled="true"]:hover { background: none; }
 
 @media (prefers-reduced-motion: reduce) { .cv-hover { transition: none; } }
+
+/* ======================= v0.5: writing and bottom bar settings ======================= */
+/* The word count can sit on the left. Every child names its own column, so a different number of tabs never shifts it. */
+.tabbar[data-stats="left"] .stats { grid-column: 1; }
+.tabbar[data-stats="left"] .stats .total { white-space: nowrap; }
+.tabbar[data-stats="left"] .st-darlings { justify-self: start; }
+.st-sub { margin: 28px 0 10px; font: 600 14px var(--serif); }
+.st-sub:first-of-type { margin-top: 0; }
+.st-row input[type=number] { width: 90px; height: 30px; padding: 0 8px; margin: 0; }
+.st-inline { display: flex; align-items: center; gap: 8px; }
+.st-inline .fontpick { position: relative; }
+.st-inline .fp-btn { width: 170px; }
+.st-tabrows { display: flex; flex-direction: column; gap: 4px; max-width: 360px; padding: 0; margin: 0; list-style: none; }
+.st-tabrow { position: relative; display: flex; align-items: center; gap: 10px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); cursor: grab; }
+.st-tabrow:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.st-tabrow.dragging { opacity: .5; }
+.st-tabrow.drop-before { box-shadow: 0 -3px 0 var(--accent); }
+.st-tabrow.drop-after { box-shadow: 0 3px 0 var(--accent); }
+.st-tabrow .grip { color: var(--muted); letter-spacing: -2px; user-select: none; }
+.st-tabrow .name { flex: 1; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
+.st-tabrow .st-check { cursor: pointer; }
+.st-tabrow[data-hidden="true"] .name { color: var(--muted); text-decoration: line-through; }
+.st-check input { accent-color: var(--accent); }

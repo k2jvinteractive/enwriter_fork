@@ -292,6 +292,24 @@
   emw.actions.redo = () => { editor.focus(); document.execCommand('redo'); };
   emw.actions.selectAll = () => { editor.focus(); document.execCommand('selectAll'); };
 
+  // An empty page starts with the writer's default font, size and spacing (Settings > Writing).
+  // They go on the first paragraph only, so text that already exists is never restyled, and a
+  // later change to the defaults affects new text only. With the stock defaults nothing is added.
+  function blankHtml() {
+    const S = emw.settings;
+    const p = document.createElement('p');
+    if (S) {
+      const font = String(S.get('writingFont') || '').replace(/["\\;{}]/g, '');
+      const size = S.get('writingSize');
+      const lh = S.get('writingSpacing');
+      if (font) p.style.fontFamily = `"${font}", serif`;
+      if (size && size !== 18) p.style.fontSize = size + 'px';
+      if (lh && lh !== 1.75) p.style.lineHeight = String(lh);
+    }
+    p.append(document.createElement('br'));
+    return p.outerHTML;
+  }
+
   // ---- API for app.js ------------------------------------------------------
   emw.editor = {
     onChange: (cb) => editor.addEventListener('input', cb),
@@ -302,7 +320,7 @@
     inEditor,
     load(html) {
       editor.contentEditable = 'false';
-      editor.innerHTML = html || '<p><br></p>';
+      editor.innerHTML = html || blankHtml();
       editor.contentEditable = 'true';
       savedRange = null;
       pendingSize = null;
@@ -333,14 +351,29 @@
     typewriter = on;
     editor.classList.toggle('typewriter', on);
     twBtn.setAttribute('aria-pressed', String(on));
-    try { localStorage.setItem('emwriter.typewriter', on ? '1' : '0'); } catch { /* ignore */ }
     if (on) centerCaret();
   }
-  twBtn.addEventListener('click', () => { setTypewriter(!typewriter); editor.focus(); });
+  // The ribbon button and Settings > Writing share one saved value (settings.json).
+  twBtn.addEventListener('click', () => {
+    setTypewriter(!typewriter);
+    if (emw.settings) emw.settings.set('typewriter', typewriter);
+    editor.focus();
+  });
   editor.addEventListener('keyup', (e) => {
     if (typewriter && /^(Arrow|Page|Home|End|Enter|Backspace|Delete)/.test(e.key)) centerCaret();
   });
-  try { if (localStorage.getItem('emwriter.typewriter') === '1') setTypewriter(true); } catch { /* ignore */ }
+  // Before part 5d this was remembered in localStorage. Carry an "on" over once, then drop the key.
+  try {
+    const old = localStorage.getItem('emwriter.typewriter');
+    if (old !== null) {
+      localStorage.removeItem('emwriter.typewriter');
+      if (old === '1' && emw.settings && !emw.settings.get('typewriter')) emw.settings.set('typewriter', true);
+    }
+  } catch { /* ignore */ }
+  if (emw.settings) {
+    setTypewriter(!!emw.settings.get('typewriter'));
+    emw.settings.onChange((key, value) => { if (key === 'typewriter' && !!value !== typewriter) setTypewriter(!!value); });
+  }
 
   // ---- drop cap: settings live on the chapter, the app tells us what to show ------------------
   const dcBtn = $('#rb-dropcap');

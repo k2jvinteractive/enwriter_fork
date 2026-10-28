@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('api', {
   setZoom: (factor) => { if (typeof factor === 'number' && factor >= 0.5 && factor <= 2) webFrame.setZoomFactor(factor); },
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSetting: (key, value) => ipcRenderer.invoke('settings:set', key, value),
+  onThemeUpdated: (cb) => ipcRenderer.on('theme:updated', (_e, t) => cb(t)),
   onBeforeClose: (cb) => ipcRenderer.on('before-close', () => cb()),
   closeReady: () => ipcRenderer.send('close-ready')
 });

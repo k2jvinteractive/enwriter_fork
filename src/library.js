@@ -106,6 +106,7 @@ function create({ app, dialog, shell, writeAtomic }) {
 
   // One write at a time: writeAtomic uses a fixed temp name, so overlapping writes would clash.
   let writeChain = Promise.resolve();
+  const changeListeners = [];
 
   function setSetting(key, value) {
     if (typeof key !== 'string' || !Object.prototype.hasOwnProperty.call(DEFAULTS, key)) return Promise.reject(new Error('Unknown setting'));
@@ -114,6 +115,8 @@ function create({ app, dialog, shell, writeAtomic }) {
     s[key] = value;
     const snapshot = JSON.stringify(s, null, 2);
     writeChain = writeChain.catch(() => {}).then(() => writeAtomic(settingsFile(), snapshot));
+    // Tell main right away (not after the disk write) so e.g. the native theme switches instantly.
+    for (const cb of changeListeners) { try { cb(key, value); } catch { /* a listener must not break saving */ } }
     return writeChain.then(() => ({ ...s }));
   }
 
@@ -656,7 +659,7 @@ function create({ app, dialog, shell, writeAtomic }) {
     h('settings:set', setSetting);
   }
 
-  return { register };
+  return { register, getSettings: loadSettingsSync, onSettingChange: (cb) => { changeListeners.push(cb); } };
 }
 
 module.exports = { create, FORMAT_VERSION };

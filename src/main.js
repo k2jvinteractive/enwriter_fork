@@ -3,7 +3,16 @@ const path = require('node:path');
 const fs = require('node:fs/promises');
 const library = require('./library');
 
-nativeTheme.themeSource = 'dark';
+// Window colours per resolved theme; must match --bg in styles.css so the window never flashes the
+// wrong colour while it opens. The light value is a placeholder until part 6d defines the palette.
+const THEME_BG = { dark: '#222222', light: '#222222' };
+const THEMES = ['dark', 'light', 'system'];
+const resolvedTheme = () => (nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
+function applyTheme(pref) {
+  // 'system' lets Chromium follow the OS; this also drives prefers-color-scheme in the page.
+  nativeTheme.themeSource = THEMES.includes(pref) ? pref : 'dark';
+}
+let lib = null;
 
 // Storage now lives in a library of .mwt packages (see library.js). The existing channels
 // (novel:load, index:write, chapter:*) still work, against whichever book is open.
@@ -16,7 +25,11 @@ async function writeAtomic(file, data) {
 }
 
 function registerIpc() {
-  library.create({ app, dialog, shell, writeAtomic }).register(ipcMain);
+  lib = library.create({ app, dialog, shell, writeAtomic });
+  lib.register(ipcMain);
+  // Apply the saved theme before any window exists, and again whenever the setting changes.
+  applyTheme(lib.getSettings().theme);
+  lib.onSettingChange((key, value) => { if (key === 'theme') applyTheme(value); });
 }
 
 function createWindow() {
@@ -27,7 +40,7 @@ function createWindow() {
     minHeight: 520,
     title: 'emwriter',
     show: false, // avoid a flash; show once the first frame is ready
-    backgroundColor: '#222222',
+    backgroundColor: THEME_BG[resolvedTheme()],
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -36,6 +49,15 @@ function createWindow() {
       spellcheck: true
     }
   });
+
+  // OS theme changes (and our own themeSource changes): recolour the window and tell the page.
+  const onThemeUpdated = () => {
+    if (win.isDestroyed()) return;
+    win.setBackgroundColor(THEME_BG[resolvedTheme()]);
+    win.webContents.send('theme:updated', resolvedTheme());
+  };
+  nativeTheme.on('updated', onThemeUpdated);
+  win.on('closed', () => nativeTheme.removeListener('updated', onThemeUpdated));
 
   win.once('ready-to-show', () => win.show());
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));

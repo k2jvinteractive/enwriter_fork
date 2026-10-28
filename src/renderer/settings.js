@@ -60,7 +60,9 @@
     set,
     reset,
     onChange: (cb) => listeners.push(cb),
-    updateAccentInk: P ? P.updateAccentInk : () => {},
+    // Accent roles live in boot.js so they are right on the first frame; re-exported for 6d.
+    contrast: P ? P.contrast : () => 1,
+    updateAccentRoles: P ? P.updateAccentRoles : () => {},
     addSection: (s) => { sections.push(s); if (nav) buildNav(); },
     open: (id) => open(id),
     flush

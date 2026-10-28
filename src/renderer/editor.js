@@ -296,6 +296,8 @@
     html: () => editor.innerHTML,
     text: () => editor.innerText,
     focus: () => editor.focus(),
+    exec,        // shared with auto-highlight.js so it gets restore() and styleWithCSS
+    inEditor,
     load(html) {
       editor.contentEditable = 'false';
       editor.innerHTML = html || '<p><br></p>';

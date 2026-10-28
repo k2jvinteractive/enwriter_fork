@@ -11,11 +11,13 @@
   <script src="store.js" defer></script>
   <script src="fonts.js" defer></script>
   <script src="editor.js" defer></script>
+  <script src="auto-highlight.js" defer></script>
   <script src="widgets.js" defer></script>
   <script src="scene-dialog.js" defer></script>
   <script src="timeline.js" defer></script>
   <script src="entity-view.js" defer></script>
   <script src="app.js" defer></script>
+  <script src="chapter-view.js" defer></script>
   <script src="inspector.js" defer></script>
 </head>
 <body>
@@ -40,6 +42,8 @@
     <symbol id="i-ribbon" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M2 6.5h12"/></symbol>
     <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
     <symbol id="i-dropcap" viewBox="0 0 16 16"><path d="M2.5 12.5L5.2 4l2.7 8.5M3.4 9.7h3.6"/><path d="M10 5h4M10 8h4M2 14.5h12" opacity=".7"/></symbol>
+    <symbol id="i-highlight-auto" viewBox="0 0 16 16"><path d="M3 10.5l5.5-5.5 3 3L6 13.5H3.5zM9.5 4l1.5-1.5 3 3L12.5 7"/><path d="M12.5 10.5v3M11 12h3" /></symbol>
+    <symbol id="i-highlight-off" viewBox="0 0 16 16"><path d="M3 10.5l5.5-5.5 3 3L6 13.5H3.5zM9.5 4l1.5-1.5 3 3L12.5 7"/><path d="M2.5 14L14 2.5" opacity=".9"/></symbol>
     <symbol id="i-typewriter" viewBox="0 0 16 16"><path d="M2 8h12" stroke-width="2.2"/><path d="M3 4h10M3 12h10" opacity=".4"/></symbol>
     <symbol id="i-image" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="6" cy="6.8" r="1" fill="currentColor" stroke="none"/><path d="M2.5 12l3.5-3.5 2.5 2.5 2-2 3 3"/></symbol>
     <symbol id="i-quote" viewBox="0 0 16 16"><path d="M3 11V8a3 3 0 013-3M9 11V8a3 3 0 013-3"/><path d="M3 11h3V8H3zM9 11h3V8H9z" fill="currentColor"/></symbol>
@@ -101,6 +105,8 @@
           <div class="group">
             <label class="rb color" title="Text color"><svg class="ic"><use href="#i-textcolor"/></svg><span class="swatch" id="sw-color"></span><input type="color" id="rb-color" value="#e6e6e6" aria-label="Text color"></label>
             <label class="rb color" title="Highlight color"><svg class="ic"><use href="#i-highlight"/></svg><span class="swatch" id="sw-hilite"></span><input type="color" id="rb-hilite" value="#e0b84a" aria-label="Highlight color"></label>
+            <button class="rb" id="rb-autohilite" type="button" aria-pressed="false" title="Auto-highlight selection"><svg class="ic"><use href="#i-highlight-auto"/></svg></button>
+            <button class="rb" id="rb-nohilite" type="button" title="No highlight (remove from selection)"><svg class="ic"><use href="#i-highlight-off"/></svg></button>
             <button class="rb" type="button" data-cmd="clear" title="Clear formatting"><svg class="ic"><use href="#i-clear"/></svg></button>
           </div>
         </div>
@@ -147,12 +153,13 @@
       <div id="page" class="page">
         <div id="editor" class="editor empty" contenteditable="true" spellcheck="true" role="textbox" aria-multiline="true" aria-label="Chapter text"></div>
       </div>
+      <div id="chapter-view" class="chapter-view" role="region" aria-label="Chapter overview" hidden></div>
     </section>
 
     <div class="gutter"></div>
 
     <aside id="inspector" class="panel right">
-      <section class="insp-sec" aria-labelledby="det-title">
+      <section class="insp-sec" id="insp-detected" aria-labelledby="det-title">
         <h3 id="det-title">Detected in this text</h3>
         <div id="det-characters" class="det-group"></div>
         <div id="det-places" class="det-group"></div>
@@ -170,6 +177,7 @@
           <textarea id="ch-synopsis" rows="5"></textarea>
         </div>
         <dl class="facts">
+          <dt hidden>Scenes</dt><dd id="in-scenes" hidden></dd>
           <dt>Words</dt><dd id="in-words">0</dd>
           <dt>Characters</dt><dd id="in-chars">0</dd>
           <dt>Reading time</dt><dd id="in-read">–</dd>

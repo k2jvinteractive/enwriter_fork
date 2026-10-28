@@ -492,3 +492,28 @@ select.lf-add { width: 100%; height: 28px; padding: 0 6px; color: var(--muted); 
 .mini-area ul, .mini-area ol { margin: 0 0 .8em; padding-left: 1.6em; }
 .mini-area img { max-width: 100%; border-radius: 6px; }
 .mini-area a { color: var(--accent); text-decoration: underline; }
+
+/* ======================= v0.5: chapter overview ======================= */
+/* A chapter is a folder of scenes: its overview replaces the editor and ribbon. */
+.center.chapter-mode #ribbon, .center.chapter-mode #page { display: none; }
+.chapter-view { flex: 1; min-height: 0; overflow-y: auto; background: var(--page); padding: 28px 32px 40px; }
+.cv-head { margin-bottom: 22px; }
+.cv-title { margin: 0; font: 600 24px/1.25 var(--serif); overflow-wrap: anywhere; }
+.cv-title.untitled { color: var(--muted); font-style: italic; }
+.cv-head .rename { font: 600 24px var(--serif); padding: 2px 6px; margin-left: -7px; }
+.cv-sub { margin: 4px 0 0; color: var(--muted); }
+.cv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 16px; }
+.cv-card { position: relative; min-height: 132px; padding: 8px 10px 24px; background: #272727; border: 2px solid var(--c); border-radius: 4px; font: 12.5px/1.35 var(--serif); cursor: pointer; }
+.cv-card:hover { background: #303030; }
+.cv-card.dragging { opacity: .4; }
+.cv-card-title { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.cv-card-title.untitled { color: var(--muted); font-style: italic; }
+.cv-card-desc { margin-top: 6px; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
+.cv-tags { position: absolute; left: 8px; bottom: 5px; display: flex; gap: 3px; }
+.cv-meta-row { position: absolute; right: 6px; bottom: 3px; display: flex; align-items: center; gap: 5px; font: 10px var(--sans); color: var(--muted); }
+.cv-add { min-height: 132px; display: grid; place-items: center; background: transparent; border: 2px dotted #5a5a5a; border-radius: 4px; color: var(--muted); font-size: 22px; position: relative; }
+.cv-add:hover, .cv-add:focus-visible { border-color: var(--accent); color: var(--accent); }
+.cv-hint { margin-top: 14px; }
+.cv-card.drop-before::before, .cv-card.drop-after::after, .cv-add.drop-before::before { content: ""; position: absolute; top: -2px; bottom: -2px; width: 3px; border-radius: 2px; background: var(--accent); }
+.cv-card.drop-before::before, .cv-add.drop-before::before { left: -10px; }
+.cv-card.drop-after::after { right: -10px; }

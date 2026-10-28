@@ -18,12 +18,18 @@
   const inWords = $('#in-words');
   const inChars = $('#in-chars');
   const inRead = $('#in-read');
+  const inScenes = $('#in-scenes');
+  const centerEl = $('.center');
+  const pageEl = $('#page');
+  const detectedEl = $('#insp-detected');
 
   const SAVE_DELAY_MS = 600;
   const LAST_KEY = 'emwriter.last';
   const COLLAPSE_KEY = 'emwriter.collapsed';
 
-  let curId = null;   // id of the chapter or scene open in the editor
+  let curId = null;          // id of the scene open in the editor (only scenes are writable)
+  let curChapterId = null;   // id of the chapter whose overview is showing, when no scene is open
+  let lastChapterId = null;  // the chapter we were last in, for choosing what to open after a delete
   let timer = 0;
   let dirtyText = false;
   let dirtyIndex = false;
@@ -37,7 +43,9 @@
   const chapterIndex = (ch) => S.data.chapters.indexOf(ch);
   const chapterLabel = (ch) => ch.title.trim() || `Chapter ${chapterIndex(ch) + 1}`;
   const sceneLabel = (s) => s.title.trim() || 'Untitled scene';
-  const curDoc = () => (curId ? S.doc(curId) : null);
+  const curDoc = () => (curId ? S.doc(curId) : null);                     // the scene in the editor
+  const viewId = () => curId || curChapterId;                              // scene or chapter overview
+  const viewDoc = () => { const id = viewId(); return id ? S.doc(id) : null; };
   const setSaveState = (t) => { stSave.textContent = t; };
 
   // ---- the chapter and scene tree --------------------------------------------
@@ -47,7 +55,7 @@
     li.dataset.id = item.id;
     li.dataset.kind = kind;
     li.draggable = true;
-    li.setAttribute('aria-current', String(item.id === curId));
+    li.setAttribute('aria-current', String(item.id === viewId()));
     const name = document.createElement('span');
     name.className = 'name';
     const num = document.createElement('span');
@@ -116,10 +124,16 @@
 
   // ---- inspector and counts -------------------------------------------------------
   function renderInspector(force = false) {
-    const d = curDoc();
+    const d = viewDoc();
     const set = (el, v) => { if (force || document.activeElement !== el) el.value = v; };
     if (!d) return;
     const isChapter = d.kind === 'chapter';
+    // A chapter has no text, so "Detected in this text" and character count make no sense for it.
+    detectedEl.hidden = isChapter;
+    inChars.previousElementSibling.hidden = isChapter;
+    inChars.hidden = isChapter;
+    inScenes.previousElementSibling.hidden = !isChapter;
+    inScenes.hidden = !isChapter;
     set(chTitleEl, d.item.title);
     chTitleEl.placeholder = isChapter ? `Chapter ${chapterIndex(d.item) + 1}` : 'Untitled scene';
     set(synopsisEl, isChapter ? d.item.synopsis : d.item.description);
@@ -140,6 +154,9 @@
     if (emw.view() === 'timeline') {
       const scenes = S.data.chapters.reduce((n, c) => n + c.scenes.length, 0);
       stWords.textContent = `${count(S.data.chapters.length, 'chapter')}, ${count(scenes, 'scene')}`;
+    } else if (curChapterId && !curId) {
+      const ch = S.find.chapter(curChapterId);
+      stWords.textContent = count(ch ? S.chapterWords(ch) : 0, 'word');
     } else {
       const d = curDoc();
       stWords.textContent = count(d ? d.item.words : 0, 'word');
@@ -147,12 +164,14 @@
   }
 
   function updateCounts() {
-    const d = curDoc();
+    const d = viewDoc();
     if (!d) return;
-    inWords.textContent = d.item.words.toLocaleString();
+    const words = d.kind === 'chapter' ? S.chapterWords(d.item) : d.item.words;   // a chapter is the sum of its scenes
+    inWords.textContent = words.toLocaleString();
     inChars.textContent = chars.toLocaleString();
-    inRead.textContent = d.item.words ? `${Math.max(1, Math.round(d.item.words / 230))} min` : '–';
-    setTreeCount(d.item.id, d.kind === 'chapter' ? S.chapterWords(d.item) : d.item.words);
+    inScenes.textContent = d.kind === 'chapter' ? d.item.scenes.length.toLocaleString() : '';
+    inRead.textContent = words ? `${Math.max(1, Math.round(words / 230))} min` : '–';
+    setTreeCount(d.item.id, words);
     if (d.kind === 'scene') setTreeCount(d.chapter.id, S.chapterWords(d.chapter));
     updateFooter();
   }
@@ -166,9 +185,8 @@
   // ---- saving ---------------------------------------------------------------------
   async function flush() {
     clearTimeout(timer);
-    if (!curId) return;
     const jobs = [];
-    if (dirtyText) { dirtyText = false; jobs.push(window.api.writeChapter(curId, editor.html())); }
+    if (dirtyText && curId) { dirtyText = false; jobs.push(window.api.writeChapter(curId, editor.html())); }
     if (dirtyIndex) { dirtyIndex = false; jobs.push(window.api.writeIndex(S.data)); }
     if (jobs.length) {
       await Promise.all(jobs);
@@ -187,7 +205,29 @@
   }
 
   // ---- opening a chapter or scene ------------------------------------------------------
+  // Which mode we are in decides whether the editor or the chapter overview is reachable at all.
+  // The editor is made inert as well as hidden, so nothing can be typed into it from a chapter.
+  function setChapterMode(on) {
+    centerEl.classList.toggle('chapter-mode', on);
+    pageEl.inert = on;
+  }
+
+  async function openChapter(id) {
+    await flush();
+    if (!S.find.chapter(id)) return;
+    curId = null;
+    curChapterId = id;
+    lastChapterId = id;
+    setChapterMode(true);
+    renderTree();
+    renderInspector(true);
+    updateCounts();
+    try { localStorage.setItem(LAST_KEY, id); } catch { /* ignore */ }
+    document.dispatchEvent(new CustomEvent('emw:doc'));
+  }
+
   async function openDoc(id) {
+    if (S.find.chapter(id)) return openChapter(id);
     let html;
     do {
       await flush();
@@ -195,9 +235,12 @@
     } while (dirtyText);   // the person typed while the file was loading
     if (!S.doc(id)) return;
     curId = id;
+    curChapterId = null;
+    setChapterMode(false);
     editor.load(html);
     const d = S.doc(id);
-    if (d.kind === 'scene' && collapsed.delete(d.chapter.id)) saveCollapsed();
+    lastChapterId = d.chapter.id;
+    if (collapsed.delete(d.chapter.id)) saveCollapsed();
     if (recount()) dirtyIndex = true;
     renderTree();
     renderInspector(true);
@@ -209,15 +252,16 @@
   }
 
   // ---- actions --------------------------------------------------------------------------
+  // A new chapter shows its (empty) overview and starts renaming; it never opens an editor.
   async function newChapter() {
-    const d = curDoc();
+    const d = viewDoc();
     const id = S.addChapter(d ? S.data.chapters.indexOf(d.chapter) + 1 : S.data.chapters.length);
-    await openDoc(id);
+    await openChapter(id);
     startTreeRename(id);
   }
 
   async function newScene(chapterId) {
-    const d = curDoc();
+    const d = viewDoc();
     const chId = typeof chapterId === 'string' ? chapterId : (d ? d.chapter.id : S.data.chapters[0].id);
     let plot = S.data.plotlines[0].id;
     if (d && d.kind === 'scene' && d.chapter.id === chId) plot = d.item.plotline;
@@ -255,17 +299,20 @@
     emw.toast(label ? `Redid: ${label}` : 'Nothing to redo', { ms: 2200 });
   }
 
-  emw.curDoc = curDoc;
+  emw.curDoc = viewDoc;                       // scene or chapter, for the inspector
+  emw.curChapterId = () => (curId ? null : curChapterId);   // the chapter overview shows when set
 
   const textUndo = emw.actions.undo;
   const textRedo = emw.actions.redo;
-  const onTimeline = () => emw.view() === 'timeline' && !emw.isTextField(document.activeElement);
+  // Structure undo (not text undo) applies on the timeline and on a chapter overview.
+  const onTimeline = () => !emw.isTextField(document.activeElement) &&
+    (emw.view() === 'timeline' || (emw.view() === 'manuscript' && !curId && !!curChapterId));
 
   Object.assign(emw.actions, {
     newChapter, newScene, save: flush, duplicateScene, undoStructure, redoStructure,
     undo: () => (onTimeline() ? undoStructure() : textUndo()),
     redo: () => (onTimeline() ? redoStructure() : textRedo()),
-    deleteCurrent: () => deleteDoc(curId),
+    deleteCurrent: () => deleteDoc(viewId()),
     deleteScene: deleteDoc,
     openScene: (id) => { emw.showView('manuscript'); openDoc(id); }
   });
@@ -276,6 +323,15 @@
     if (d) S.updateChapter(d.chapter.id, { dropcap: { ...d.chapter.dropcap, ...patch } }, { coalesce: `dropcap:${d.chapter.id}` });
   };
 
+  // After the open item disappears: the first scene of the chapter we were in, else that chapter's
+  // overview; if the chapter itself is gone, the first scene of the book, else the first overview.
+  function openFallback() {
+    const home = (lastChapterId && S.find.chapter(lastChapterId)) || null;
+    if (home) return openDoc(home.scenes.length ? home.scenes[0].id : home.id);
+    for (const ch of S.data.chapters) if (ch.scenes.length) return openDoc(ch.scenes[0].id);
+    return openDoc(S.data.chapters[0].id);
+  }
+
   S.on((info) => {
     dirtyIndex = true;
     scheduleSave();
@@ -284,8 +340,12 @@
       renderTree();
       renderInspector();
       syncDropcap();
+    } else if (!curId && curChapterId && S.find.chapter(curChapterId)) {
+      renderTree();
+      renderInspector();
+      updateCounts();
     } else if (S.data.chapters.length) {
-      openDoc(S.data.chapters[0].id);   // the open item was removed (deleted or undone)
+      openFallback();   // the open scene or chapter was removed (deleted or undone)
     }
     updateFooter();
   });
@@ -294,19 +354,21 @@
   editor.onChange(() => { dirtyText = true; scheduleSave(); });
 
   chTitleEl.addEventListener('input', () => {
-    const d = curDoc();
+    const d = viewDoc();
     if (!d) return;
+    const id = viewId();
     const patch = { title: chTitleEl.value };
-    const opts = { coalesce: `title:${curId}` };
-    if (d.kind === 'chapter') S.updateChapter(curId, patch, opts); else S.updateScene(curId, patch, opts);
+    const opts = { coalesce: `title:${id}` };
+    if (d.kind === 'chapter') S.updateChapter(id, patch, opts); else S.updateScene(id, patch, opts);
   });
 
   synopsisEl.addEventListener('input', () => {
-    const d = curDoc();
+    const d = viewDoc();
     if (!d) return;
-    const opts = { coalesce: `syn:${curId}` };
-    if (d.kind === 'chapter') S.updateChapter(curId, { synopsis: synopsisEl.value }, opts);
-    else S.updateScene(curId, { description: synopsisEl.value }, opts);
+    const id = viewId();
+    const opts = { coalesce: `syn:${id}` };
+    if (d.kind === 'chapter') S.updateChapter(id, { synopsis: synopsisEl.value }, opts);
+    else S.updateScene(id, { description: synopsisEl.value }, opts);
   });
 
   novelTitleEl.addEventListener('input', () => {
@@ -328,7 +390,7 @@
       return;
     }
     if (e.target.closest('.add-scene')) { newScene(li.dataset.id); return; }
-    if (li.dataset.id !== curId) openDoc(li.dataset.id);
+    if (li.dataset.id !== viewId()) openDoc(li.dataset.id);
   });
 
   listEl.addEventListener('dblclick', (e) => {
@@ -416,7 +478,7 @@
     } else if (mod && e.altKey && key === 'z') {
       e.preventDefault();
       if (e.shiftKey) redoStructure(); else undoStructure();
-    } else if (mod && !e.altKey && (key === 'z' || key === 'y') && emw.view() === 'timeline' && !emw.isTextField(e.target)) {
+    } else if (mod && !e.altKey && (key === 'z' || key === 'y') && onTimeline() && !emw.isTextField(e.target)) {
       e.preventDefault();
       if (key === 'y' || e.shiftKey) redoStructure(); else undoStructure();
     } else if (e.altKey && !mod) {
@@ -430,13 +492,36 @@
   window.api.onBeforeClose(async () => { await flush(); emw.flushHooks.forEach((f) => f()); await new Promise((r) => setTimeout(r, 60)); window.api.closeReady(); });
   emw.onView(updateFooter);
 
+  // ---- one-time upgrade: chapter text becomes a first scene ---------------------------------
+  // Order matters so no text is ever lost: copy into the new scene files first, and only then
+  // save the index that points at them. The old chapter file is left on disk as a backup.
+  async function migrateChapterText() {
+    const todo = S.migrationCandidates();
+    if (!todo) return;
+    try {
+      const items = [];
+      for (const { id, words } of todo) {
+        const html = await window.api.readChapter(id);
+        if (html.trim() || words > 0) items.push({ chapterId: id, html });
+      }
+      const made = S.migrateChapters(items);
+      await Promise.all(made.map((m) => window.api.writeChapter(m.sceneId, m.html)));
+      await window.api.writeIndex(S.data);
+    } catch {
+      // Nothing was saved, so the old files are intact: reload them and try again next launch.
+      S.load(await window.api.loadNovel());
+      emw.toast('Could not upgrade your chapters yet. Your text is untouched.');
+    }
+  }
+
   // ---- start ---------------------------------------------------------------------------------
   (async function init() {
     S.load(await window.api.loadNovel());
+    await migrateChapterText();
     novelTitleEl.value = S.data.title;
     let last = '';
     try { last = localStorage.getItem(LAST_KEY) || ''; } catch { /* ignore */ }
-    await openDoc(S.doc(last) ? last : S.data.chapters[0].id);
+    if (S.doc(last)) await openDoc(last); else await openFallback();
     dirtyIndex = true;   // persist any upgrade to the new chapter and scene format
     scheduleSave();
   })();

@@ -57,7 +57,8 @@
 
   // ---- shapes --------------------------------------------------------------
   const dropcapDefaults = () => ({ on: false, font: '', lines: 3, gap: 8, color: '' });
-  const blankChapter = (title = '') => ({ id: uid(), title, words: 0, synopsis: '', scenes: [], dropcap: dropcapDefaults() });
+  // A chapter is a named container of scenes. It has no text of its own.
+  const blankChapter = (title = '') => ({ id: uid(), title, synopsis: '', scenes: [], dropcap: dropcapDefaults() });
   const blankScene = (plotline, title = '') => ({
     id: uid(), title, plotline, words: 0, description: '',
     characters: [], places: [], tags: [], noteIds: [], color: '', status: 'idea'
@@ -103,7 +104,7 @@
     const known = new Set(data.plotlines.map((p) => p.id));
     for (const ch of data.chapters) {
       ch.title = /^Chapter \d+$/.test(ch.title || '') ? '' : (ch.title || '');
-      ch.words ??= 0;
+      delete ch.words;   // chapters no longer have text; their count is the sum of their scenes
       ch.synopsis ??= '';
       ch.dropcap = Object.assign(dropcapDefaults(), ch.dropcap);
       ch.scenes = (ch.scenes || []).map((raw) => {
@@ -128,8 +129,14 @@
     }
   }
 
+  // Saves from before chapters became folders (schema < 2) may hold text in the chapter itself.
+  // normalize() drops the chapter's `words`, so remember what the migration needs first.
+  let migration = null;
   function load(raw) {
     data = raw;
+    migration = (Number(data.schema) || 1) < 2
+      ? (Array.isArray(data.chapters) ? data.chapters : []).map((c) => ({ id: c.id, words: Number(c.words) || 0 }))
+      : null;
     normalize();
     undoStack = []; redoStack = []; lastKey = null;
     return data;
@@ -152,14 +159,14 @@
     return f ? { kind: 'scene', item: f.scene, chapter: f.chapter } : null;
   }
   const entity = (kind, id) => data[kind].find((e) => e.id === id) || null;
-  const chapterWords = (ch) => ch.words + ch.scenes.reduce((n, s) => n + s.words, 0);
+  const chapterWords = (ch) => ch.scenes.reduce((n, s) => n + s.words, 0);
   const totalWords = () => data.chapters.reduce((n, c) => n + chapterWords(c), 0);
 
-  // The drop cap belongs to the first paragraph of a chapter: the chapter's own text if it
-  // has any, otherwise the first scene that has text.
+  // The drop cap belongs to the first paragraph of a chapter: the first scene that has text,
+  // otherwise the first scene, otherwise nobody.
   const dropcapOwner = (ch) => {
-    if (ch.words > 0 || !ch.scenes.length) return ch.id;
-    return (ch.scenes.find((s) => s.words > 0) || ch.scenes[0]).id;
+    const s = ch.scenes.find((x) => x.words > 0) || ch.scenes[0];
+    return s ? s.id : null;
   };
 
   // Scenes that reference a character, place, note or tag.
@@ -199,12 +206,9 @@
   // Word counts come from the text files, so undo must not roll them back.
   function restore(json) {
     const words = new Map();
-    for (const c of data.chapters) { words.set(c.id, c.words); for (const s of c.scenes) words.set(s.id, s.words); }
+    for (const c of data.chapters) for (const s of c.scenes) words.set(s.id, s.words);
     data = JSON.parse(json);
-    for (const c of data.chapters) {
-      if (words.has(c.id)) c.words = words.get(c.id);
-      for (const s of c.scenes) if (words.has(s.id)) s.words = words.get(s.id);
-    }
+    for (const c of data.chapters) for (const s of c.scenes) if (words.has(s.id)) s.words = words.get(s.id);
   }
   function step(from, to, verb) {
     const entry = from.pop();
@@ -396,12 +400,38 @@
   // Word counts are measured, not edited, so they are not undo steps.
   function setWords(id, n) {
     const d = doc(id);
-    if (!d || d.item.words === n) return false;
+    if (!d || d.kind !== 'scene' || d.item.words === n) return false;
     d.item.words = n;
     return true;
   }
 
+  // One-time upgrade: which chapters might hold their own text. Null when nothing to do.
+  const migrationCandidates = () => (migration ? migration.map((m) => ({ ...m })) : null);
+
+  // Turns each chapter's own text into a first scene (index 0, first plotline, no title, draft).
+  // `items` is [{ chapterId, html }] for chapters that really had text. This is not an undo step,
+  // and the old chapter file stays on disk as a backup. Returns [{ sceneId, html }] so the caller
+  // can write each scene's file before persisting the index.
+  function migrateChapters(items) {
+    const made = [];
+    for (const { chapterId, html } of items) {
+      const ch = findChapter(chapterId);
+      if (!ch || ch.migrated) continue;
+      const scene = blankScene(data.plotlines[0].id);
+      scene.status = 'draft';
+      const tmp = new DOMParser().parseFromString(html, 'text/html');
+      scene.words = ((tmp.body.textContent || '').match(/\S+/g) || []).length;
+      ch.scenes.unshift(scene);
+      ch.migrated = true;
+      made.push({ sceneId: scene.id, html });
+    }
+    data.schema = 2;
+    migration = null;
+    return made;
+  }
+
   emw.store = {
+    migrationCandidates, migrateChapters,
     get data() { return data; },
     load, on: (cb) => listeners.push(cb),
     find: { chapter: findChapter, scene: findScene, plotline: findPlotline },

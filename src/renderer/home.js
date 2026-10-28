@@ -116,7 +116,7 @@
     if (isLast) c.classList.add('continue');
     if (b.newerFormat) c.classList.add('locked');
     const edited = fmtDate(b.edited);
-    c.setAttribute('aria-label', [b.title, isLast ? 'continue writing' : '', b.newerFormat ? 'needs a newer emWriter' : `${plural(b.words || 0, 'word')}`, edited ? `last edited ${edited}` : ''].filter(Boolean).join(', '));
+    c.setAttribute('aria-label', [b.title, isLast ? 'continue writing' : '', b.newerFormat ? 'needs a newer enWriter' : `${plural(b.words || 0, 'word')}`, edited ? `last edited ${edited}` : ''].filter(Boolean).join(', '));
 
     const url = covers.get(b.id);
     if (url) {
@@ -137,7 +137,7 @@
     c.append(text);
 
     const hover = el('div', 'cv-hover');
-    if (b.newerFormat) hover.append(el('span', null, 'Needs a newer emWriter'));
+    if (b.newerFormat) hover.append(el('span', null, 'Needs a newer enWriter'));
     else {
       hover.append(el('span', null, plural(b.words || 0, 'word')));
       if (edited) hover.append(el('span', 'cv-date', `Edited ${edited}`));
@@ -232,7 +232,7 @@
     const b = lib && lib.books.get(id);
     if (!b) return;
     if (b.newerFormat) {
-      emw.toast(`“${b.title}” was made by a newer version of emWriter. Update emWriter to open it.`, { ms: 8000 });
+      emw.toast(`“${b.title}” was made by a newer version of enWriter. Update enWriter to open it.`, { ms: 8000 });
       return;
     }
     if (emw.book.id !== id && !(await emw.book.open(id))) return;

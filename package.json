@@ -1,6 +1,6 @@
 {
-  "name": "emWriter",
-  "productName": "emWriter",
+  "name": "enWriter",
+  "productName": "enWriter",
   "version": "0.6.3",
   "description": "\u2014Writer",
   "main": "src/main.js",
@@ -12,8 +12,8 @@
     "dist": "electron-builder"
   },
   "build": {
-    "appId": "com.stixhi.emwriter",
-    "productName": "emWriter",
+    "appId": "com.stixhi.enwriter",
+    "productName": "enWriter",
     "files": [
       "src/**/*"
     ],
@@ -30,7 +30,7 @@
       "extendInfo": {
         "CFBundleDocumentTypes": [
           {
-            "CFBundleTypeName": "emWriter Book",
+            "CFBundleTypeName": "enWriter Book",
             "CFBundleTypeExtensions": [
               "mwt"
             ],
@@ -51,8 +51,8 @@
     "fileAssociations": [
       {
         "ext": "mwt",
-        "name": "emWriter Book",
-        "description": "emWriter book package",
+        "name": "enWriter Book",
+        "description": "enWriter book package",
         "role": "Editor",
         "isPackage": true
       }

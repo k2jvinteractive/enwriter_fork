@@ -35,7 +35,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: emwriter-${{ matrix.os }}
+          name: enwriter-${{ matrix.os }}
           if-no-files-found: error
           path: |
             dist/*.exe

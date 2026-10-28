@@ -1,8 +1,8 @@
 {
   "name": "enWriter",
   "productName": "enWriter",
-  "version": "0.6.3",
-  "description": "\u2014Writer",
+  "version": "0.6.4",
+  "description": "—Writer",
   "main": "src/main.js",
   "author": "Stixhi Stishi <kineticstishi19@gmail.com>",
   "license": "MIT",
@@ -59,7 +59,7 @@
     ]
   },
   "devDependencies": {
-    "electron": "^45.0.0",
+    "electron": "^45.1.0",
     "electron-builder": "^26.18.0"
   }
 }

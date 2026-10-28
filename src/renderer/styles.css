@@ -586,3 +586,61 @@ select.lf-add { width: 100%; height: 28px; padding: 0 6px; color: var(--muted); 
 .st-reset { color: var(--muted); text-decoration: underline; }
 .st-reset:hover { color: var(--ink); }
 html[data-motion="reduce"] *, html[data-motion="reduce"] *::before, html[data-motion="reduce"] *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+
+/* ======================= v0.5: home and shelves ======================= */
+.home { flex: 1; min-height: 0; overflow-y: auto; padding: 36px 48px 56px; background: var(--page); }
+.home > * { max-width: 1100px; margin-left: auto; margin-right: auto; }
+.home-head { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 14px 24px; margin-bottom: 30px; }
+.home-greet { margin: 0; font: 400 28px/1.2 var(--serif); }
+.home-greet em { font-style: italic; color: var(--accent); }
+.home-continue { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 7px 14px; border: 1px solid var(--line); border-radius: 4px; text-align: left; }
+.home-continue .lbl { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.home-continue b { font: 600 14px var(--serif); max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-continue:hover { border-color: var(--accent); }
+.home-continue:hover .lbl { color: var(--accent); }
+.home-error { color: var(--muted); }
+
+.shelves { display: flex; flex-direction: column; gap: 30px; }
+.shelf-head { position: relative; display: flex; align-items: center; gap: 8px; margin-bottom: 14px; min-height: 26px; }
+.shelf-name { margin: 0; font: 400 16px var(--serif); color: var(--muted); cursor: text; }
+.shelf-head .rename { max-width: 260px; }
+.shelf-head .kebab { position: static; flex: none; }
+.shelf-head:hover .kebab, .shelf-head .kebab:focus-visible { opacity: 1; }
+/* The shelf is just the thin line the covers rest on, like the timeline's plotline. */
+.shelf-row { display: flex; align-items: flex-end; gap: 18px; padding: 8px 14px 0; overflow-x: auto; border-bottom: 3px solid var(--line); }
+
+.cover { position: relative; flex: none; width: 120px; height: 170px; display: flex; flex-direction: column; padding: 12px 10px; border: 2px solid var(--bc, var(--line)); border-radius: 4px; background: var(--field); text-align: left; cursor: pointer; }
+.cover.locked { opacity: .55; }
+.cv-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: 2px; }
+.cv-text { position: relative; display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.cv-title { font: 600 15px/1.25 var(--serif); display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.cv-pen { margin-top: auto; padding-top: 6px; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cover.has-img .cv-text { position: absolute; left: 0; right: 0; bottom: 0; flex: none; padding: 8px 10px; border-radius: 0 0 2px 2px; background: color-mix(in srgb, var(--page) 88%, transparent); }
+.cover.has-img .cv-title { -webkit-line-clamp: 2; font-size: 13px; }
+.cv-hover { position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; gap: 1px; padding: 8px 10px; border-radius: 0 0 2px 2px; background: var(--bg); font-size: 11px; opacity: 0; transition: opacity .12s; }
+.cv-date { color: var(--muted); }
+.cover:hover .cv-hover, .cover:focus-visible .cv-hover { opacity: 1; }
+.cv-tag { position: absolute; top: 6px; left: 6px; padding: 1px 6px; border-radius: 3px; background: var(--accent); color: var(--accent-ink); font-size: 10px; font-weight: 600; }
+.cover.continue .cv-text { padding-top: 20px; }
+.cover.continue.has-img .cv-text { padding-top: 8px; }
+.cover.dragging { opacity: .5; }
+
+/* "Add" slots: dotted, accent on hover. */
+.cover-slot { flex: none; width: 120px; height: 170px; display: grid; place-items: center; border: 2px dotted #5a5a5a; border-radius: 4px; color: var(--muted); }
+.cover-slot:hover { border-color: var(--accent); color: var(--accent); }
+.shelf-new { display: block; width: 100%; height: 44px; margin-top: 30px; border: 2px dotted #5a5a5a; border-radius: 4px; color: var(--muted); }
+.shelf-new:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Drop marks reuse the app's names: a 3px accent bar, or a dotted outline for "end of the shelf". */
+.cover.drop-before::before, .cover.drop-after::after { content: ""; position: absolute; top: -2px; bottom: -2px; width: 3px; border-radius: 2px; background: var(--accent); }
+.cover.drop-before::before { left: -11px; }
+.cover.drop-after::after { right: -11px; }
+.shelf-row.drop-over { outline: 2px dotted var(--accent); outline-offset: 2px; }
+
+.home-colour-input { position: fixed; left: 50%; top: 40%; width: 0; height: 0; opacity: 0; pointer-events: none; }
+
+/* No book open: the other tabs are muted and do nothing. */
+.tab[aria-disabled="true"] { color: var(--muted); opacity: .45; cursor: default; }
+.tab[aria-disabled="true"]:hover { background: none; }
+
+@media (prefers-reduced-motion: reduce) { .cv-hover { transition: none; } }

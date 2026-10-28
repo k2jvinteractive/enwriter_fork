@@ -121,6 +121,7 @@
   const keyLabel = (k) => (isMac ? k.replace('Ctrl', '⌘').replace('Alt', '⌥') : k);
   const MENUS = [
     ['File', [
+      ['New book (on Home)', 'Ctrl+N', 'newBook'],
       ['New chapter', 'Ctrl+N', 'newChapter'],
       ['New scene', 'Ctrl+Shift+N', 'newScene'],
       ['Save', 'Ctrl+S', 'save'],
@@ -141,6 +142,8 @@
       ['Select all', 'Ctrl+A', 'selectAll']
     ]],
     ['View', [
+      ['Home', '', 'goHome'],
+      null,
       ['Pin chapters panel', 'Alt+1', 'toggleHierarchy'],
       ['Show ribbon', 'Alt+2', 'toggleRibbon'],
       ['Pin inspector', 'Alt+3', 'toggleInspector']
@@ -269,22 +272,36 @@
     home: 'Home', places: 'Places', characters: 'Characters', timeline: 'Timeline',
     manuscript: 'Manuscript', darlings: 'Darlings', notes: 'Notes', tags: 'Tags'
   };
-  const BUILT = ['manuscript', 'timeline', 'characters', 'places', 'notes', 'tags', 'darlings'];
-  let currentView = 'manuscript';
+  const BUILT = ['home', 'manuscript', 'timeline', 'characters', 'places', 'notes', 'tags', 'darlings'];
+  let currentView = 'home';
   const tabs = $$('.tab[data-view]');
+  const hasBook = () => !!(emw.book && emw.book.id);
+
+  // With no book open only Home works; the other tabs are muted and ignore clicks.
+  function refreshTabs() {
+    tabs.forEach((t) => {
+      if (t.dataset.view === 'home') return;
+      if (hasBook()) t.removeAttribute('aria-disabled'); else t.setAttribute('aria-disabled', 'true');
+    });
+    $('#stats').hidden = currentView === 'home' || !hasBook();
+  }
+  emw.refreshTabs = refreshTabs;
 
   function showView(name) {
+    if (name !== 'home' && !hasBook()) return;   // nothing to show without a book
     currentView = name;
     const built = BUILT.includes(name);
     for (const v of BUILT) $('#view-' + v).hidden = v !== name;
     $('#blank').hidden = built;
-    $('#stats').hidden = !built;   // each view decides which of its parts show (see darlings.js)
+    $('#stats').hidden = !built || name === 'home';   // each view decides which of its parts show (see darlings.js)
     $('#blank-title').textContent = TITLES[name];
     tabs.forEach((t) => t.setAttribute('aria-current', String(t.dataset.view === name)));
     emw.viewListeners.forEach((cb) => cb(name));
     if (name === 'manuscript') emw.editor?.focus();
   }
   emw.showView = showView;
-  tabs.forEach((t) => t.addEventListener('click', () => showView(t.dataset.view)));
-  showView('manuscript');
+  tabs.forEach((t) => t.addEventListener('click', () => { if (t.getAttribute('aria-disabled') !== 'true') showView(t.dataset.view); }));
+  emw.actions.goHome = () => showView('home');
+  refreshTabs();
+  showView('home');
 })();

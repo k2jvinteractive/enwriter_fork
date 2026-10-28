@@ -145,6 +145,17 @@ function create({ app, dialog, shell, writeAtomic }) {
       const book = newer ? null : await readJson(path.join(dir, 'book.json'));
       let hasCover = false;
       try { await fs.access(path.join(dir, 'Meta', 'cover.webp')); hasCover = true; } catch { /* none */ }
+      // Shown on the Home cover on hover. Words are the sum of the scenes (older saves kept them
+      // on the chapter); "edited" is when book.json was last written, which every text save does.
+      let words = 0;
+      if (book && Array.isArray(book.chapters)) {
+        for (const ch of book.chapters) {
+          if (ch && Array.isArray(ch.scenes) && ch.scenes.length) for (const sc of ch.scenes) words += Number(sc && sc.words) || 0;
+          else words += Number(ch && ch.words) || 0;
+        }
+      }
+      let edited = null;
+      try { edited = (await fs.stat(path.join(dir, 'book.json'))).mtimeMs; } catch { /* none */ }
       books.push({
         id: info.bookId,
         folder: ent.name,
@@ -152,6 +163,8 @@ function create({ app, dialog, shell, writeAtomic }) {
         title: (book && book.title) || ent.name.slice(0, -EXT.length),
         created: info.created || null,
         hasCover,
+        words,
+        edited,
         newerFormat: newer
       });
     }
@@ -201,7 +214,7 @@ function create({ app, dialog, shell, writeAtomic }) {
   }
 
   function publicBook(b, meta) {
-    return { id: b.id, title: b.title, created: b.created, hasCover: b.hasCover,
+    return { id: b.id, title: b.title, created: b.created, hasCover: b.hasCover, words: b.words, edited: b.edited,
       color: (meta && typeof meta.color === 'string') ? meta.color : null, newerFormat: b.newerFormat };
   }
 
@@ -330,6 +343,35 @@ function create({ app, dialog, shell, writeAtomic }) {
     return true;
   }
 
+  // Cover images live in Meta/cover.webp. The renderer sends a data URL it made itself; we accept
+  // only a webp data URL of a sane size and decode it here, so nothing else can be written.
+  const COVER_RE = /^data:image\/webp;base64,([A-Za-z0-9+/]+={0,2})$/;
+  const COVER_MAX = 3 * 1024 * 1024;
+
+  async function getCover(id) {
+    const { book } = await findBook(id);
+    try {
+      const buf = await fs.readFile(path.join(book.dir, 'Meta', 'cover.webp'));
+      return 'data:image/webp;base64,' + buf.toString('base64');
+    } catch { return null; }
+  }
+
+  async function setCover(id, dataUrl) {
+    const { book } = await findBook(id);
+    if (book.newerFormat) throw new Error('This book needs a newer emWriter. Nothing was changed.');
+    const file = path.join(book.dir, 'Meta', 'cover.webp');
+    if (dataUrl === null) { await fs.rm(file, { force: true }); return true; }
+    const m = typeof dataUrl === 'string' && dataUrl.length <= COVER_MAX * 1.4 ? COVER_RE.exec(dataUrl) : null;
+    if (!m) throw new Error('Invalid cover image');
+    const buf = Buffer.from(m[1], 'base64');
+    if (!buf.length || buf.length > COVER_MAX) throw new Error('Invalid cover image');
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    const tmp = file + '.tmp';
+    await fs.writeFile(tmp, buf);
+    await fs.rename(tmp, file);
+    return true;
+  }
+
   async function openBook(id) {
     const { book } = await findBook(id);
     const info = await readJson(path.join(book.dir, 'Meta', 'info.json'));
@@ -427,6 +469,8 @@ function create({ app, dialog, shell, writeAtomic }) {
     h('book:close', async () => { open = null; return true; });
     h('book:rename', renameBook);
     h('book:delete', deleteBook);
+    h('book:cover-get', getCover);
+    h('book:cover-set', setCover);
     h('book:reveal', async (id) => { const { book } = await findBook(id); shell.showItemInFolder(book.dir); return true; });
     h('library:choose-folder', async () => {
       const r = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });

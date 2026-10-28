@@ -646,4 +646,13 @@
   });
   // The store has no 'loaded' event; the first document opening is the first moment there is data.
   document.addEventListener('emw:doc', () => { updateStats(); scheduleInspector(); });
+  // A different book: the old search, filter and preview selection mean nothing there.
+  emw.book.onSwitch(() => {
+    filter = '';
+    query = '';
+    sel = '';
+    searchEl.value = '';
+    updateStats();
+    scheduleInspector();
+  });
 })();

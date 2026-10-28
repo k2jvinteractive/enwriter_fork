@@ -24,8 +24,6 @@
   const detectedEl = $('#insp-detected');
 
   const SAVE_DELAY_MS = 600;
-  const LAST_KEY = 'emwriter.last';
-  const COLLAPSE_KEY = 'emwriter.collapsed';
 
   let curId = null;          // id of the scene open in the editor (only scenes are writable)
   let curChapterId = null;   // id of the chapter whose overview is showing, when no scene is open
@@ -35,9 +33,13 @@
   let dirtyIndex = false;
   let chars = 0;
 
+  // Which chapters are folded in the tree. Kept per book, so it is read again on every switch.
   const collapsed = new Set();
-  try { JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '[]').forEach((id) => collapsed.add(id)); } catch { /* ignore */ }
-  const saveCollapsed = () => { try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsed])); } catch { /* ignore */ } };
+  const loadCollapsed = () => {
+    collapsed.clear();
+    try { JSON.parse(localStorage.getItem(emw.book.key('collapsed')) || '[]').forEach((id) => collapsed.add(id)); } catch { /* ignore */ }
+  };
+  const saveCollapsed = () => { try { localStorage.setItem(emw.book.key('collapsed'), JSON.stringify([...collapsed])); } catch { /* ignore */ } };
 
   const count = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
   const chapterIndex = (ch) => S.data.chapters.indexOf(ch);
@@ -185,6 +187,9 @@
   // ---- saving ---------------------------------------------------------------------
   async function flush() {
     clearTimeout(timer);
+    // No book open (Home with nothing opened): there is nothing to write, and the main process
+    // would refuse. Drop the flags so they cannot leak into the next book.
+    if (!emw.book.id) { dirtyText = false; dirtyIndex = false; return; }
     const jobs = [];
     if (dirtyText && curId) { dirtyText = false; jobs.push(window.api.writeChapter(curId, editor.html())); }
     if (dirtyIndex) { dirtyIndex = false; jobs.push(window.api.writeIndex(S.data)); }
@@ -222,7 +227,7 @@
     renderTree();
     renderInspector(true);
     updateCounts();
-    try { localStorage.setItem(LAST_KEY, id); } catch { /* ignore */ }
+    try { localStorage.setItem(emw.book.key('last'), id); } catch { /* ignore */ }
     document.dispatchEvent(new CustomEvent('emw:doc'));
   }
 
@@ -246,7 +251,7 @@
     renderInspector(true);
     updateCounts();
     syncDropcap();
-    try { localStorage.setItem(LAST_KEY, id); } catch { /* ignore */ }
+    try { localStorage.setItem(emw.book.key('last'), id); } catch { /* ignore */ }
     editor.focus();
     document.dispatchEvent(new CustomEvent('emw:doc'));
   }
@@ -333,6 +338,7 @@
   }
 
   S.on((info) => {
+    if (!emw.book.id) return;   // the empty placeholder store is never saved or shown
     dirtyIndex = true;
     scheduleSave();
     if (info && info.quiet) return;
@@ -518,16 +524,30 @@
   }
 
   // ---- start ---------------------------------------------------------------------------------
-  (async function init() {
-    S.load(await window.api.loadNovel());
-    // One-time notice after the library migration (library:get reports it once).
-    try { const l = await window.api.getLibrary(); if (l && l.migrationNotice) emw.toast(l.migrationNotice, { ms: 12000 }); } catch { /* ignore */ }
+  // Runs after the store was reset for a different book (or emptied, when id is null).
+  // Everything this file remembers about the previous book is dropped first.
+  async function startBook(bookId) {
+    clearTimeout(timer);
+    dirtyText = false;
+    dirtyIndex = false;
+    curId = null;
+    curChapterId = null;
+    lastChapterId = null;
+    chars = 0;
+    editor.load('');
+    setChapterMode(false);
+    loadCollapsed();
+    setSaveState('Saved');
+    if (!bookId) { listEl.replaceChildren(); novelTitleEl.value = ''; return; }
     await migrateChapterText();
     novelTitleEl.value = S.data.title;
     let last = '';
-    try { last = localStorage.getItem(LAST_KEY) || ''; } catch { /* ignore */ }
+    try { last = localStorage.getItem(emw.book.key('last')) || ''; } catch { /* ignore */ }
     if (S.doc(last)) await openDoc(last); else await openFallback();
-    dirtyIndex = true;   // persist any upgrade to the new chapter and scene format
-    scheduleSave();
-  })();
+    // Only write back when loading actually changed something (an upgrade, a repaired count).
+    // Opening a book must not touch its "last edited" date.
+    if (emw.book.upgraded) dirtyIndex = true;
+    if (dirtyIndex) scheduleSave();
+  }
+  emw.book.onSwitch(startBook);
 })();

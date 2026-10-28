@@ -12,14 +12,14 @@
   const undoBtn = $('#tl-undo');
   const redoBtn = $('#tl-redo');
   const summaryEl = $('#tl-summary');
-  const COMPACT_KEY = 'emwriter.tl.compact';
+  const compactKey = () => emw.book.key('tl.compact');   // per book
 
   let compact = false;
   let query = '';
   let filter = '';
   let rafId = 0;
   let stale = true;
-  try { compact = localStorage.getItem(COMPACT_KEY) === '1'; } catch { /* ignore */ }
+  const loadCompact = () => { try { return localStorage.getItem(compactKey()) === '1'; } catch { return false; } };
 
   const el = (tag, cls, text) => {
     const n = document.createElement(tag);
@@ -421,7 +421,7 @@
   redoBtn.addEventListener('click', () => emw.actions.redoStructure());
   sizeBtn.addEventListener('click', () => {
     compact = !compact;
-    try { localStorage.setItem(COMPACT_KEY, compact ? '1' : '0'); } catch { /* ignore */ }
+    try { localStorage.setItem(compactKey(), compact ? '1' : '0'); } catch { /* ignore */ }
     render();
   });
   searchEl.addEventListener('input', () => { query = searchEl.value; schedule(); });
@@ -432,5 +432,13 @@
     if (emw.view() === 'timeline') schedule(); else stale = true;
   });
   emw.onView((name) => { if (name === 'timeline' && S.data) render(); });
+  emw.book.onSwitch(() => {
+    compact = loadCompact();
+    query = '';
+    filter = '';
+    searchEl.value = '';
+    $('#tl-filter').value = '';
+    stale = true;
+  });
   emw.timelineRefresh = () => { if (emw.view() === 'timeline') render(); else stale = true; };
 })();

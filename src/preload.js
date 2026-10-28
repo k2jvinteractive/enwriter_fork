@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld('api', {
   closeBook: () => ipcRenderer.invoke('book:close'),
   renameBook: (id, title) => ipcRenderer.invoke('book:rename', id, title),
   deleteBook: (id) => ipcRenderer.invoke('book:delete', id),
+  getCover: (id) => ipcRenderer.invoke('book:cover-get', id),
+  setCover: (id, dataUrl) => ipcRenderer.invoke('book:cover-set', id, dataUrl),
   revealBook: (id) => ipcRenderer.invoke('book:reveal', id),
   chooseLibraryFolder: () => ipcRenderer.invoke('library:choose-folder'),
   settingsSync: () => ipcRenderer.sendSync('settings:get-sync'),

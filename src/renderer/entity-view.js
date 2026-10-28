@@ -74,7 +74,7 @@
     const thumbImg = q('.ev-thumb img');
     const unpick = q('.ev-unpick');
 
-    const LAST = `emwriter.sel.${kind}`;
+    const lastKey = () => emw.book.key(`sel.${kind}`);   // per book
     let sel = null;
     let filter = '';
     let contentId = null;
@@ -273,7 +273,7 @@
     function select(id, { focusName = false } = {}) {
       flushContent();
       sel = id;
-      try { localStorage.setItem(LAST, id || ''); } catch { /* ignore */ }
+      try { localStorage.setItem(lastKey(), id || ''); } catch { /* ignore */ }
       renderList();
       loadDetail();
       if (focusName) { nameEl.focus(); nameEl.select(); }
@@ -455,10 +455,25 @@
     S.on(onStore);
     emw.onView((name) => {
       if (name !== kind) { flushContent(); return; }
-      if (!sel || !cur()) { let last = ''; try { last = localStorage.getItem(LAST) || ''; } catch { /* ignore */ } sel = S.entity(kind, last) ? last : (S.data[kind][0]?.id || null); }
+      if (!sel || !cur()) { let last = ''; try { last = localStorage.getItem(lastKey()) || ''; } catch { /* ignore */ } sel = S.entity(kind, last) ? last : (S.data[kind][0]?.id || null); }
       stale = false;
       renderList();
       loadDetail();
+    });
+
+    // A different book: forget the selection, filter, cached thumbnails and the open note body.
+    // The views are hidden during a switch, so the next time one is shown it picks from the new data.
+    emw.book.onSwitch(() => {
+      loadToken++;
+      clearTimeout(saveTimer);
+      dirty = false;
+      contentId = null;
+      sel = null;
+      filter = '';
+      q('.ev-filter').value = '';
+      thumbs.clear();
+      if (mini) mini.load('');
+      stale = true;
     });
 
     return { select, newItem };

@@ -1,8 +1,8 @@
 {
   "name": "enWriter",
   "productName": "enWriter",
-  "version": "0.6.4",
-  "description": "—Writer",
+  "version": "0.6.5",
+  "description": "enWriter",
   "main": "src/main.js",
   "author": "Stixhi Stishi <kineticstishi19@gmail.com>",
   "license": "MIT",

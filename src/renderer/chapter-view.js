@@ -37,7 +37,7 @@
       const t = S.entity('tags', id);
       if (!t) continue;
       const d = el('i', 'tag-dot');
-      d.style.background = t.color;
+      d.style.setProperty('--tc', t.color);
       d.title = t.name;
       tags.append(d);
     }

@@ -384,6 +384,10 @@
   const dcSwatch = $('#sw-dc');
   const dcReset = $('#rb-dc-reset');
   const dcEdit = (patch) => { if (emw.editor.onDropcapEdit) emw.editor.onDropcapEdit(patch); };
+  let dcExplicit = false;
+  const dcStart = () => (emw.legibility ? emw.legibility.accentHex() : '#e8caa4');
+  // A chapter with no drop cap colour follows the theme and accent; one with a colour keeps it.
+  document.documentElement.addEventListener('emw:themechange', () => { if (!dcExplicit) dcColor.value = dcStart(); });
 
   dcBtn.addEventListener('click', () => dcEdit({ on: dcBtn.getAttribute('aria-pressed') !== 'true' }));
   emw.fontPicker(dcFont, { onPick: (name) => dcEdit({ font: name }) });
@@ -399,8 +403,10 @@
     dcFont.querySelector('.fp-label').textContent = dc.font || 'Same as text';
     if (document.activeElement !== dcLines) dcLines.value = String(dc.lines);
     if (document.activeElement !== dcGap) dcGap.value = String(dc.gap);
-    if (dc.color) dcColor.value = dc.color;
-    dcSwatch.style.setProperty('--c', dc.color || '#dcdcdc');
+    // No colour of its own: the cap takes the text colour, and the picker starts from the theme's accent.
+    dcExplicit = !!dc.color;
+    dcColor.value = dc.color || dcStart();
+    dcSwatch.style.setProperty('--c', dc.color || 'var(--ink)');
     editor.classList.toggle('dc-on', dc.on && active);
     editor.style.setProperty('--dc-lines', dc.lines);
     editor.style.setProperty('--dc-gap', dc.gap + 'px');

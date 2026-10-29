@@ -4,8 +4,8 @@ const fs = require('node:fs/promises');
 const library = require('./library');
 
 // Window colours per resolved theme; must match --bg in styles.css so the window never flashes the
-// wrong colour while it opens. The light value is a placeholder until part 6d defines the palette.
-const THEME_BG = { dark: '#222222', light: '#222222' };
+// wrong colour while it opens.
+const THEME_BG = { dark: '#222222', light: '#f1eee8' };
 const THEMES = ['dark', 'light', 'system'];
 const resolvedTheme = () => (nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
 function applyTheme(pref) {
@@ -38,7 +38,7 @@ function createWindow() {
     height: 820,
     minWidth: 900,
     minHeight: 520,
-    title: 'emwriter',
+    title: 'enWriter',
     show: false, // avoid a flash; show once the first frame is ready
     backgroundColor: THEME_BG[resolvedTheme()],
     webPreferences: {

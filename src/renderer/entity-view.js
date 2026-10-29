@@ -127,7 +127,7 @@
           li.setAttribute('aria-current', String(e.id === sel));
           const top = document.createElement('div');
           top.className = 'ev-item-name';
-          if (cfg.color) { const d = document.createElement('i'); d.className = 'tag-dot'; d.style.background = e.color; top.append(d); }
+          if (cfg.color) { const d = document.createElement('i'); d.className = 'tag-dot'; d.style.setProperty('--tc', e.color); top.append(d); }
           top.append(document.createTextNode(e.name || `Unnamed ${cfg.one}`));
           li.append(top);
           const sub = cfg.subtitle === 'preview' ? e.preview : e.short;

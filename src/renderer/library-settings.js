@@ -34,8 +34,8 @@
       body.append(where);
       const hasLib = found.kind === 'library';
       const what = hasLib
-        ? `It already holds an emWriter library: ${count(found.books, 'book')} on ${count(found.shelves, 'shelf', 'shelves')}.`
-        : found.kind === 'empty' ? 'The folder is empty.' : 'The folder has other files in it. emWriter will not touch them.';
+        ? `It already holds an enWriter library: ${count(found.books, 'book')} on ${count(found.shelves, 'shelf', 'shelves')}.`
+        : found.kind === 'empty' ? 'The folder is empty.' : 'The folder has other files in it. enWriter will not touch them.';
       body.append(el('p', 'lc-what', what));
 
       const opts = [
@@ -44,7 +44,7 @@
         ['fresh', 'Start a new library here', 'Starts empty. Your current books stay where they are, and you can open that library again later.',
           hasLib ? 'That folder already holds a library. Open it instead.' : ''],
         ['open', 'Open the library in this folder', 'Shows the shelves and books that are already there.',
-          hasLib ? '' : 'There is no emWriter library in that folder.']
+          hasLib ? '' : 'There is no enWriter library in that folder.']
       ];
       const list = el('div', 'lc-opts');
       for (const [mode, title, desc, why] of opts) {
@@ -77,7 +77,7 @@
   function working(text) {
     ensureDialog();
     body.textContent = '';
-    body.append(el('h3', null, text), el('p', 'lc-what', 'Please keep emWriter open.'));
+    body.append(el('h3', null, text), el('p', 'lc-what', 'Please keep enWriter open.'));
     // No way out while files are being copied.
     dlg.addEventListener('cancel', (e) => e.preventDefault(), { once: true });
     if (!dlg.open) dlg.showModal();

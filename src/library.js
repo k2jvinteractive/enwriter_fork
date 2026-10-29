@@ -125,7 +125,7 @@ function create({ app, dialog, shell, writeAtomic }) {
     const s = await loadSettings();
     const dir = (typeof s.libraryPath === 'string' && path.isAbsolute(s.libraryPath))
       ? s.libraryPath
-      : path.join(app.getPath('documents'), 'emWriter');
+      : path.join(app.getPath('documents'), 'enWriter');
     await fs.mkdir(dir, { recursive: true });
     return dir;
   }
@@ -141,7 +141,7 @@ function create({ app, dialog, shell, writeAtomic }) {
   function checkVersion(obj, what) {
     const v = obj && obj.formatVersion;
     if (typeof v === 'number' && v > FORMAT_VERSION) {
-      const err = new Error(`${what} was made by a newer version of emWriter (format ${v}). Update emWriter to open it. Nothing was changed.`);
+      const err = new Error(`${what} was made by a newer version of enWriter (format ${v}). Update enWriter to open it. Nothing was changed.`);
       err.code = 'NEWER_FORMAT';
       throw err;
     }
@@ -349,7 +349,7 @@ function create({ app, dialog, shell, writeAtomic }) {
 
   async function renameBook(id, title) {
     const { root, book } = await findBook(id);
-    if (book.newerFormat) throw new Error('This book needs a newer emWriter. Nothing was changed.');
+    if (book.newerFormat) throw new Error('This book needs a newer enWriter. Nothing was changed.');
     const clean = String(title || '').trim().slice(0, 200);
     if (!clean) throw new Error('A book needs a title');
     const data = (await readJson(path.join(book.dir, 'book.json'))) || {};
@@ -394,7 +394,7 @@ function create({ app, dialog, shell, writeAtomic }) {
 
   async function setCover(id, dataUrl) {
     const { book } = await findBook(id);
-    if (book.newerFormat) throw new Error('This book needs a newer emWriter. Nothing was changed.');
+    if (book.newerFormat) throw new Error('This book needs a newer enWriter. Nothing was changed.');
     const file = path.join(book.dir, 'Meta', 'cover.webp');
     if (dataUrl === null) { await fs.rm(file, { force: true }); return true; }
     const m = typeof dataUrl === 'string' && dataUrl.length <= COVER_MAX * 1.4 ? COVER_RE.exec(dataUrl) : null;
@@ -428,7 +428,7 @@ function create({ app, dialog, shell, writeAtomic }) {
       const usable = lib.books.filter((b) => !b.newerFormat);
       let pick = usable.find((b) => b.id === s.lastBookId) || usable[0];
       if (!pick) {
-        if (lib.books.length) throw Object.assign(new Error('Every book in the library needs a newer emWriter.'), { code: 'NEWER_FORMAT' });
+        if (lib.books.length) throw Object.assign(new Error('Every book in the library needs a newer enWriter.'), { code: 'NEWER_FORMAT' });
         pick = await createBook('Untitled Novel');
       }
       await openBook(pick.id);
@@ -502,7 +502,7 @@ function create({ app, dialog, shell, writeAtomic }) {
     if (a.size !== b.size) return false;
     for (const [k, v] of a) if (b.get(k) !== v) return false;
     if (!(await readJson(path.join(dstDir, 'Meta', 'info.json')))) return false;
-    // A book from a newer emWriter is copied as is; we do not claim to understand its book.json.
+    // A book from a newer enWriter is copied as is; we do not claim to understand its book.json.
     if (!newer && !(await readJson(path.join(dstDir, 'book.json')))) return false;
     return true;
   }
@@ -528,9 +528,9 @@ function create({ app, dialog, shell, writeAtomic }) {
     const same = process.platform === 'linux' ? real === current : real.toLowerCase() === current.toLowerCase();
     if (same) throw new Error('That is already your library folder. Choose a different one.');
     // Probe for write access with a real file: permission bits do not tell the whole story.
-    const probe = path.join(p, '.emwriter-write-test-' + randomUUID().slice(0, 8));
+    const probe = path.join(p, '.enwriter-write-test-' + randomUUID().slice(0, 8));
     try { await fs.writeFile(probe, ''); await fs.rm(probe, { force: true }); }
-    catch { throw new Error('emWriter cannot write to that folder (it may be read-only). Choose a folder you can save to.'); }
+    catch { throw new Error('enWriter cannot write to that folder (it may be read-only). Choose a folder you can save to.'); }
     const entries = (await fs.readdir(p)).filter((n) => !n.startsWith('.'));
     const raw = await readJson(libFile(p));
     if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
@@ -565,7 +565,7 @@ function create({ app, dialog, shell, writeAtomic }) {
       let moved = 0;
 
       if (mode === 'open') {
-        if (found.kind !== 'library') throw new Error('There is no emWriter library in that folder (no library.json). Nothing was changed.');
+        if (found.kind !== 'library') throw new Error('There is no enWriter library in that folder (no library.json). Nothing was changed.');
       } else if (found.kind === 'library') {
         throw new Error('That folder already holds a library. Choose “Open an existing library” instead. Nothing was changed.');
       } else if (mode === 'fresh') {

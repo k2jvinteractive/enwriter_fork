@@ -218,9 +218,14 @@
     colorLabel.innerHTML = '<svg class="ic"><use href="#i-textcolor"/></svg><span class="swatch"></span>';
     const colorIn = make('input');
     colorIn.type = 'color';
-    colorIn.value = '#e8caa4';
+    colorIn.value = emw.legibility ? emw.legibility.accentHex() : '#e8caa4';
     colorLabel.append(colorIn);
-    colorLabel.querySelector('.swatch').style.setProperty('--c', colorIn.value);
+    const colorSwatch = colorLabel.querySelector('.swatch');
+    colorSwatch.style.setProperty('--c', colorIn.value);
+    if (emw.legibility) {
+      emw.legibility.follow(colorIn, colorSwatch, '--accent-text');   // starts from, and follows, the theme
+      emw.legibility.watch(colorIn, colorLabel);                      // warns about the other theme
+    }
     bar.append(colorLabel);
     const file = make('input');
     file.type = 'file';

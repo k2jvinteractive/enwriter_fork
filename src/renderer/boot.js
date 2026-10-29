@@ -52,29 +52,66 @@
     } catch { /* fall through */ }
     return fallback;
   }
-  function accentText(accent, bg, ink) {
+  function toHsl([r, g, b]) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min, l = (max + min) / 2;
+    if (!d) return [0, 0, l];
+    const s = d / (1 - Math.abs(2 * l - 1));
+    const h = max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return [h * 60, s, l];
+  }
+  function fromHsl([h, s, l]) {
+    const k = (n) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
+    return [0, 8, 4].map((n) => 255 * (l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))));
+  }
+  // `bgs` is one '#rrggbb' or a list: the text has to reach 4.5:1 on all of them.
+  // On a dark theme the accent is lightened toward the ink. On a light theme mixing toward the dark
+  // ink would turn every accent into the same grey-brown (and the active tab would look quieter than
+  // the inactive ones), so there it is darkened in HSL instead, which keeps its hue and richness.
+  function accentText(accent, bgs, ink) {
+    const list = Array.isArray(bgs) ? bgs : [bgs];
+    const ok = (c) => list.every((b) => contrast(c, b) >= 4.5);
     const a = toRgb(accent), i = toRgb(ink);
-    if (!a || !i || contrast(accent, bg) >= 4.5) return accent;
+    if (!a || !i || ok(accent)) return accent;
+    if (luminance(i) < luminance(a)) {
+      const [h, s, l] = toHsl(a);
+      for (let x = l - 0.01; x >= 0; x -= 0.01) {
+        const c = toHex(fromHsl([h, s, x]));
+        if (ok(c)) return c;
+      }
+      return ink;
+    }
     for (let t = 0.05; t <= 1.0001; t += 0.05) {
       const c = toHex(mix(a, i, t));
-      if (contrast(c, bg) >= 4.5) return c;
+      if (ok(c)) return c;
     }
     return ink;
   }
   const accentInk = (accent) => (contrast(accent, INK_DARK) >= contrast(accent, INK_LIGHT) ? INK_DARK : INK_LIGHT);
 
+  // Accent text sits on more than the app background: hovered and pressed rows, the page, menus,
+  // dialogs, the notes editor, and avatars (a card tinted with the accent). In the dark theme the
+  // lightest of these is the hard one, in the light theme the darkest, so check them all.
+  const ACCENT_SURFACES = ['--bg', '--page', '--ribbon', '--hover', '--pressed', '--surface-raised',
+    '--surface-card-inset', '--surface-sunken', '--surface-toast'];
+  function accentSurfaces(hex) {
+    const list = ACCENT_SURFACES.map((n) => themeColor(n, null)).filter(Boolean);
+    // .av mixes 22% accent into the card inset colour; accent text has to read on that too.
+    const inset = themeColor('--surface-card-inset', null);
+    if (inset) list.push(toHex(mix(toRgb(inset), toRgb(hex), 0.22)));
+    return list.length ? list : ['#222222'];
+  }
+
   function updateAccentRoles(hex) {
     if (!toRgb(hex)) return;
     root.style.setProperty('--accent-ink', accentInk(hex));
-    root.style.setProperty('--accent-text', accentText(hex, themeColor('--bg', '#222222'), themeColor('--ink', '#dcdcdc')));
+    root.style.setProperty('--accent-text', accentText(hex, accentSurfaces(hex), themeColor('--ink', '#dcdcdc')));
   }
 
   const resolvedTheme = (s) => (s.theme === 'system' ? (light.matches ? 'light' : 'dark') : s.theme);
 
   function apply(s) {
     current = { ...current, ...s };
-    // The light palette arrives in part 6d; until then data-theme="light" has no styles and the
-    // app stays dark. The attribute is already the hook those styles will use.
     root.dataset.theme = resolvedTheme(current);
     root.dataset.themePref = current.theme;
     root.style.setProperty('--accent', current.accent);
@@ -82,6 +119,8 @@
     // Explicit "reduce" forces it on; null follows the OS through the media query in the CSS.
     root.dataset.motion = current.reduceMotion === true ? 'reduce' : '';
     try { window.api.setZoom(current.uiScale / 100); } catch { /* keep the current zoom */ }
+    // Things that mirror a theme colour in JS (the ribbon's colour pickers) repaint on this.
+    try { root.dispatchEvent(new CustomEvent('emw:themechange', { detail: { theme: root.dataset.theme } })); } catch { /* nothing is listening yet */ }
   }
 
   // "Match system" must follow the OS live.

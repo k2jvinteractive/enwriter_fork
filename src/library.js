@@ -17,6 +17,41 @@ const FORMAT_VERSION = 1;
 const ID_RE = /^[\w-]+$/;
 const EXT = '.mwt';
 
+// Part 7c: spell check languages, as data so more can be added later. The renderer mirrors this list
+// (emw.SPELL_LANGUAGES in settings.js); main is the one that checks it.
+const SPELL_LANGUAGES = [
+  { id: 'en-US', label: 'US English', short: 'US' },
+  { id: 'en-GB', label: 'UK English', short: 'UK' }
+];
+const SPELL_IDS = SPELL_LANGUAGES.map((l) => l.id);
+
+// Custom dictionary words: letters (any script, so accented names work), marks, apostrophes and
+// hyphens. A curly apostrophe is stored straight, because smart quotes turn ' into ’ while typing
+// and the checker treats both as the same letter.
+const MAX_WORDS = 5000;
+const MAX_WORD_LENGTH = 60;
+const WORD_RE = /^[\p{L}\p{M}'-]+$/u;
+const HAS_LETTER = /\p{L}/u;
+
+// Returns a clean list from anything: drops what is not a valid word, de-duplicates ignoring case
+// (first spelling wins), keeps the order and stops at the cap. Never throws.
+function sanitiseWords(list) {
+  const out = [];
+  if (!Array.isArray(list)) return out;
+  const seen = new Set();
+  for (const raw of list) {
+    if (out.length >= MAX_WORDS) break;
+    if (typeof raw !== 'string') continue;
+    const w = raw.trim().replace(/\u2019/g, "'");
+    if (w.length < 1 || w.length > MAX_WORD_LENGTH || !WORD_RE.test(w) || !HAS_LETTER.test(w)) continue;
+    const key = w.toLocaleLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(w);
+  }
+  return out;
+}
+
 function create({ app, dialog, shell, writeAtomic }) {
   // ---- settings.json -------------------------------------------------------------------------
   // Lives in userData, never in the library: the library's own location is a setting.
@@ -48,7 +83,10 @@ function create({ app, dialog, shell, writeAtomic }) {
     // Part 7a: only the writer's keyboard changes, { actionId: [bindings] }. An empty list means unbound.
     shortcuts: {},
     // Part 7b: off until the writer turns it on (ribbon button, F7). Applied to the whole session by main.js.
-    spellcheck: false
+    spellcheck: false,
+    // Part 7c: the default language (a book may override it in book.json) and the shared custom dictionary.
+    spellLanguage: 'en-US',
+    customWords: []
   };
 
   const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
@@ -87,6 +125,9 @@ function create({ app, dialog, shell, writeAtomic }) {
     },
     statsSide: (v) => v === 'left' || v === 'right',
     spellcheck: (v) => typeof v === 'boolean',
+    spellLanguage: (v) => SPELL_IDS.includes(v),
+    // Checked after SANITISERS has cleaned the list, so this only fails for something that is not a list.
+    customWords: (v) => Array.isArray(v) && v.length <= MAX_WORDS && sanitiseWords(v).length === v.length,
     // Shape only; the renderer decides which action ids it knows (unknown ones are kept for later versions).
     shortcuts: (v) => {
       if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
@@ -96,13 +137,18 @@ function create({ app, dialog, shell, writeAtomic }) {
     }
   };
 
+  // Values that are cleaned rather than rejected: a hand-edited list keeps its good entries.
+  const SANITISERS = { customWords: sanitiseWords };
+  const cleaned = (key, v) => (SANITISERS[key] && Array.isArray(v) ? SANITISERS[key](v) : v);
+
   // Keep only known keys whose values pass validation; anything else falls back to the default.
   // A hand-edited or corrupt file therefore can never put a bad value into the app.
   function merged(saved) {
     const out = { ...DEFAULTS };
     if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
       for (const k of Object.keys(DEFAULTS)) {
-        if (k in saved && k !== 'libraryPath' && SETTING_RULES[k](saved[k])) out[k] = saved[k];
+        const v = k in saved ? cleaned(k, saved[k]) : undefined;
+        if (k in saved && k !== 'libraryPath' && SETTING_RULES[k](v)) out[k] = v;
       }
       // libraryPath is validated against the dialog pick only when *set*; a stored path is trusted.
       if (typeof saved.libraryPath === 'string' && path.isAbsolute(saved.libraryPath)) out.libraryPath = saved.libraryPath;
@@ -125,6 +171,7 @@ function create({ app, dialog, shell, writeAtomic }) {
 
   function setSetting(key, value) {
     if (typeof key !== 'string' || !Object.prototype.hasOwnProperty.call(DEFAULTS, key)) return Promise.reject(new Error('Unknown setting'));
+    value = cleaned(key, value);
     if (!SETTING_RULES[key](value)) return Promise.reject(new Error('Invalid value for ' + key));
     const s = loadSettingsSync();
     s[key] = value;
@@ -677,4 +724,4 @@ function create({ app, dialog, shell, writeAtomic }) {
   return { register, getSettings: loadSettingsSync, onSettingChange: (cb) => { changeListeners.push(cb); } };
 }
 
-module.exports = { create, FORMAT_VERSION };
+module.exports = { create, FORMAT_VERSION, SPELL_LANGUAGES, sanitiseWords };

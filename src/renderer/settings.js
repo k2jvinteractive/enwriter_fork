@@ -16,10 +16,18 @@
     tabs: { order: ['home', 'places', 'characters', 'timeline', 'manuscript', 'darlings', 'notes', 'tags'], hidden: [] },
     statsSide: 'right',
     spellcheck: false,
+    spellLanguage: 'en-US',   // part 7c: the default; a book may override it
+    customWords: [],          // part 7c: the shared custom dictionary
     shortcuts: {}   // only the writer's changes: { actionId: ['Ctrl+K', ...] } (part 7a)
   };
   // Object defaults (tabs) are copied so nothing ever edits DEFAULTS in place.
   const clone = (v) => (v && typeof v === 'object' ? JSON.parse(JSON.stringify(v)) : v);
+
+  // Part 7c. Mirrors SPELL_LANGUAGES in library.js (main checks it); add a language in both places.
+  const SPELL_LANGUAGES = [
+    { id: 'en-US', label: 'US English', short: 'US' },
+    { id: 'en-GB', label: 'UK English', short: 'UK' }
+  ];
 
   const ACCENTS = [
     ['Sand', '#e8caa4'], ['Amber', '#e5b567'], ['Coral', '#e58f72'], ['Rose', '#e39aa6'],
@@ -28,6 +36,7 @@
 
   let values = { ...clone(DEFAULTS), ...(P ? P.current() : {}) };
   const listeners = [];
+  const extras = {};
   const pending = {};
   let timer = 0;
 
@@ -66,6 +75,9 @@
     contrast: P ? P.contrast : () => 1,
     updateAccentRoles: P ? P.updateAccentRoles : () => {},
     addSection: (s) => { sections.push(s); if (nav) buildNav(); },
+    // Lets another file add rows to the end of a section it does not own: extend('writing', (pane, redo) => …).
+    // They run after the section has drawn itself; the section's "Reset to default" link stays last.
+    extend: (id, fn) => { (extras[id] ||= []).push(fn); },
     open: (id) => open(id),
     flush
   };
@@ -109,6 +121,7 @@
   }
 
   // Shared with the sections other files add (writing-settings.js), so they look the same.
+  emw.SPELL_LANGUAGES = SPELL_LANGUAGES;
   emw.settings.ui = { el, row, segmented, resetLink };
 
   // ---- built-in sections -----------------------------------------------------------------
@@ -184,6 +197,7 @@
     nav.querySelectorAll('button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.id === activeId)));
     pane.textContent = '';
     s.render(pane, () => showSection(activeId));
+    for (const fn of extras[s.id] || []) { try { fn(pane, () => showSection(activeId)); } catch { /* one extension must not blank the pane */ } }
   }
 
   function buildNav() {

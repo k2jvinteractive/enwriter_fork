@@ -850,3 +850,23 @@ kbd { display: inline-flex; gap: 3px; font: 12px var(--sans); }
 
 /* ======================= v0.6: spell check ======================= */
 .menu-item.menu-strong { font-weight: 600; }
+
+/* ======================= v0.6: spell check language and dictionary ======================= */
+/* A choice from a set in the context menu: the check mark column keeps the labels aligned. */
+.menu-choice { display: flex; align-items: center; gap: 6px; }
+.menu-check { display: inline-block; width: 14px; text-align: center; color: var(--accent-text); }
+/* .rb sets display:grid, which would beat the hidden attribute (macOS has no language button). */
+#rb-spell-lang { min-width: 34px; letter-spacing: .04em; }
+#rb-spell-lang[hidden] { display: none; }
+.st-dict-add { display: flex; align-items: flex-start; gap: 8px; }
+.st-dict-add textarea { flex: 1; max-width: 340px; min-height: 30px; padding: 5px 8px; resize: vertical; font: inherit; line-height: 1.4; }
+.st-dict-add button { height: 30px; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 4px; }
+.st-dict-add button:hover { background: var(--hover); }
+.st-dict-add button:focus-visible, .st-words .chip-x:focus-visible { outline: 2px solid var(--accent-edge); outline-offset: 2px; }
+.st-dict { display: flex; flex-direction: column; gap: 10px; }
+.st-dict .st-inline input[type=text] { max-width: 220px; }
+.st-words { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; max-height: 260px; overflow-y: auto; }
+.st-dict .st-hint { margin: 0; }
+/* The remove control reveals on hover or focus; it stays in the tab order. */
+.st-words .chip-x { opacity: 0; }
+.st-words .chip:hover .chip-x, .st-words .chip:focus-within .chip-x { opacity: 1; }

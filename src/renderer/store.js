@@ -72,6 +72,8 @@
 
   function normalize() {
     data.title ??= 'Untitled Novel';
+    // Part 7c: a book may carry its own spell check language. Anything unknown is dropped (the default applies).
+    if (!(emw.SPELL_LANGUAGES || []).some((l) => l.id === data.spellLanguage)) delete data.spellLanguage;
     if (!Array.isArray(data.plotlines)) data.plotlines = [];
     if (!data.plotlines.length) data.plotlines.push({ id: uid(), name: 'Main Plot', color: '#e8caa4' });
     if (!Array.isArray(data.chapters)) data.chapters = [];
@@ -231,6 +233,11 @@
   }
   const undo = () => step(undoStack, redoStack, 'Undo');
   const redo = () => step(redoStack, undoStack, 'Redo');
+
+  // The book's own spell check language; null goes back to the default in Settings. One undo step.
+  const setSpellLanguage = (id) => commit('spell check language', () => {
+    if (id) data.spellLanguage = id; else delete data.spellLanguage;
+  });
 
   // ---- chapters --------------------------------------------------------------
   const addChapter = (at = data.chapters.length, title = '') => commit('add chapter', () => {
@@ -699,6 +706,7 @@
     addPlotline, updatePlotline, deletePlotline, movePlotline,
     addEntity, updateEntity, setQuiet, deleteEntity, duplicateEntity,
     addCategory, renameCategory, deleteCategory, moveCategory,
+    setSpellLanguage,
     undo, redo, canUndo: () => undoStack.length > 0, canRedo: () => redoStack.length > 0
   };
 })();

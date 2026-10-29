@@ -110,9 +110,9 @@
       } else {
         items.push({ label: 'No suggestions', disabled: true, run() {} });
       }
-      // "Add to dictionary" arrives with part 7c, which sets emw.spell.addWord. Hidden until then.
+      // "Add to dictionary" comes from spell-dictionary.js (part 7c), which sets emw.spell.addWord.
       if (emw.spell && typeof emw.spell.addWord === 'function') {
-        items.push(null, { label: 'Add to dictionary', run: () => emw.spell.addWord(d.word) });
+        items.push(null, { label: 'Add to dictionary', run: () => { back(); emw.spell.addWord(d.word); } });   // back(): the field must have focus for the underline to refresh
       }
       items.push(null);
     }
@@ -133,7 +133,7 @@
 
   // Another file (darlings.js) has items that belong in the editor's menu. They are used once,
   // for the menu that follows, and dropped if none arrives.
-  emw.spell = { ...(emw.spell || {}), setExtra: (items) => { extra = { items, at: Date.now() }; } };
+  emw.spell = { ...(emw.spell || {}), recheck: nudge, setExtra: (items) => { extra = { items, at: Date.now() }; } };
 
   try { window.api.onSpellContext(show); } catch { /* no bridge: the fallback below still gives a menu */ }
 

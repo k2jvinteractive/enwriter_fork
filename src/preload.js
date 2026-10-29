@@ -28,6 +28,9 @@ contextBridge.exposeInMainWorld('api', {
   setSetting: (key, value) => ipcRenderer.invoke('settings:set', key, value),
   onSpellContext: (cb) => ipcRenderer.on('spell:context', (_e, d) => cb(d)),
   spellReplace: (text) => ipcRenderer.invoke('spell:replace', text),
+  spellInfo: () => ipcRenderer.invoke('spell:info'),
+  spellSetLanguage: (id) => ipcRenderer.invoke('spell:set-language', id),
+  onSpellDownload: (cb) => ipcRenderer.on('spell:download', (_e, d) => cb(d)),
   onThemeUpdated: (cb) => ipcRenderer.on('theme:updated', (_e, t) => cb(t)),
   onBeforeClose: (cb) => ipcRenderer.on('before-close', () => cb()),
   closeReady: () => ipcRenderer.send('close-ready')

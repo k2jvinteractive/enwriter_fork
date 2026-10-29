@@ -72,8 +72,22 @@
       b.type = 'button';
       b.className = 'menu-item' + (it.danger ? ' danger-item' : '') + (it.strong ? ' menu-strong' : '');
       b.disabled = !!it.disabled;
-      b.setAttribute('role', 'menuitem');
-      b.textContent = it.label;
+      if (typeof it.checked === 'boolean') {
+        // A choice from a set (part 7c): a check mark in front of the current one.
+        b.setAttribute('role', 'menuitemradio');
+        b.setAttribute('aria-checked', String(it.checked));
+        const row = document.createElement('span');
+        row.className = 'menu-choice';
+        const mark = document.createElement('span');
+        mark.className = 'menu-check';
+        mark.setAttribute('aria-hidden', 'true');
+        mark.textContent = it.checked ? '✓' : '';
+        row.append(mark, it.label);
+        b.append(row);
+      } else {
+        b.setAttribute('role', 'menuitem');
+        b.textContent = it.label;
+      }
       b.addEventListener('click', () => { closeCtx(); it.run(); });
       ctx.append(b);
     }

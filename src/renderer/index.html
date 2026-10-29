@@ -17,6 +17,7 @@
   <script src="fonts.js" defer></script>
   <script src="smart-text.js" defer></script>
   <script src="editor.js" defer></script>
+  <script src="spellcheck.js" defer></script>
   <script src="legibility.js" defer></script>
   <script src="auto-highlight.js" defer></script>
   <script src="writing-settings.js" defer></script>
@@ -33,6 +34,7 @@
 </head>
 <body>
   <svg class="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-spell" viewBox="0 0 16 16"><path d="M1.8 11L4.6 3.5 7.4 11M2.8 8.6h3.6M8.8 11.2l2.2 2.2 4-5"/></symbol>
     <symbol id="i-undo" viewBox="0 0 16 16"><path d="M5 3L2.5 5.5 5 8M2.5 5.5h7a3.5 3.5 0 010 7H6"/></symbol>
     <symbol id="i-redo" viewBox="0 0 16 16"><path d="M11 3l2.5 2.5L11 8M13.5 5.5h-7a3.5 3.5 0 000 7H10"/></symbol>
     <symbol id="i-left" viewBox="0 0 16 16"><path d="M2 3.5h12M2 6.8h7.5M2 10.2h12M2 13.5h7.5"/></symbol>
@@ -145,6 +147,7 @@
           <div class="group">
             <button class="rb" type="button" data-cmd="link" title="Insert link"><svg class="ic"><use href="#i-link"/></svg></button>
             <button class="rb" type="button" data-cmd="insertHorizontalRule" title="Scene break"><svg class="ic"><use href="#i-hr"/></svg></button>
+            <button class="rb" id="rb-spell" type="button" aria-pressed="false" title="Spell check (F7)" aria-label="Spell check"><svg class="ic"><use href="#i-spell"/></svg></button>
           </div>
         </div>
         <div class="ribbon-row">
@@ -164,7 +167,7 @@
         </div>
       </div>
       <div id="page" class="page">
-        <div id="editor" class="editor empty" contenteditable="true" spellcheck="true" role="textbox" aria-multiline="true" aria-label="Chapter text"></div>
+        <div id="editor" class="editor empty" contenteditable="true" spellcheck="false" role="textbox" aria-multiline="true" aria-label="Chapter text"></div>
       </div>
       <div id="chapter-view" class="chapter-view" role="region" aria-label="Chapter overview" hidden></div>
     </section>
@@ -292,7 +295,7 @@
         </div>
       </aside>
       <section class="sd-main">
-        <input id="sd-title" class="sd-title" placeholder="Scene title" spellcheck="true" aria-label="Scene title">
+        <input id="sd-title" class="sd-title" placeholder="Scene title" spellcheck="false" aria-label="Scene title">
         <div class="sd-tabs" role="tablist">
           <button type="button" role="tab" data-tab="description" aria-selected="true">Description</button>
           <button type="button" role="tab" data-tab="notes" aria-selected="false">Notes</button>

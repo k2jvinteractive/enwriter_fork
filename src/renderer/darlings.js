@@ -301,7 +301,8 @@
   // ---- the editor's right-click menu ---------------------------------------------------------------
   editorEl.addEventListener('contextmenu', (e) => {
     if (!sceneId()) return;
-    e.preventDefault();
+    // No preventDefault and no menu of our own: Chromium reports the right-click to the main process,
+    // spellcheck.js builds one menu (corrections, Cut, Copy, Paste, Select all) and appends these items.
     const s = getSelection();
     let range = s.rangeCount ? s.getRangeAt(0) : null;
     const hit = document.caretRangeFromPoint ? document.caretRangeFromPoint(e.clientX, e.clientY) : null;
@@ -311,16 +312,11 @@
     if (!range || !editorEl.contains(range.startContainer)) return;
     const saved = range.cloneRange();
     const has = !saved.collapsed && !!saved.toString().trim();
-    const reselect = () => { editorEl.focus(); const sl = getSelection(); sl.removeAllRanges(); sl.addRange(saved); };
-    emw.menu(e.clientX, e.clientY, [
-      { label: 'Cut', disabled: !has, run: () => { reselect(); document.execCommand('cut'); } },
-      { label: 'Copy', disabled: !has, run: () => { reselect(); document.execCommand('copy'); } },
-      { label: 'Paste', run: () => { reselect(); if (!document.execCommand('paste')) emw.toast('Use Ctrl+V to paste'); } },
-      null,
-      has
-        ? { label: 'Send selection to Darlings', run: () => sendSelection(saved) }
-        : { label: 'Send paragraph to Darlings', run: () => sendParagraph(saved) }
-    ]);
+    const item = has
+      ? { label: 'Send selection to Darlings', run: () => sendSelection(saved) }
+      : { label: 'Send paragraph to Darlings', run: () => sendParagraph(saved) };
+    if (emw.spell) emw.spell.setExtra([item]);
+    else emw.menu(e.clientX, e.clientY, [item]);
   });
 
   // ---- dragging text out of the editor onto the Darlings tab --------------------------------------

@@ -70,7 +70,7 @@
       if (!it) { const s = document.createElement('div'); s.className = 'menu-sep'; ctx.append(s); continue; }
       const b = document.createElement('button');
       b.type = 'button';
-      b.className = 'menu-item' + (it.danger ? ' danger-item' : '');
+      b.className = 'menu-item' + (it.danger ? ' danger-item' : '') + (it.strong ? ' menu-strong' : '');
       b.disabled = !!it.disabled;
       b.setAttribute('role', 'menuitem');
       b.textContent = it.label;
@@ -139,7 +139,9 @@
       null,
       ['Send to Darlings', 'Ctrl+Shift+D', 'sendToDarlings'],
       null,
-      ['Select all', 'Ctrl+A', 'selectAll']
+      ['Select all', 'Ctrl+A', 'selectAll'],
+      null,
+      ['Spell check', 'F7', 'toggleSpellcheck']
     ]],
     ['View', [
       ['Home', '', 'goHome'],

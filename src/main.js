@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, nativeTheme, dialog, shell } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, nativeTheme, dialog, shell, session } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const library = require('./library');
@@ -29,8 +29,30 @@ function registerIpc() {
   lib.register(ipcMain);
   // Apply the saved theme before any window exists, and again whenever the setting changes.
   applyTheme(lib.getSettings().theme);
-  lib.onSettingChange((key, value) => { if (key === 'theme') applyTheme(value); });
+  // Spell check is off until the writer turns it on. The spell checker itself stays available
+  // (webPreferences.spellcheck) so it can be switched on and off for the whole session.
+  session.defaultSession.setSpellCheckerEnabled(lib.getSettings().spellcheck === true);
+  lib.onSettingChange((key, value) => {
+    if (key === 'theme') applyTheme(value);
+    if (key === 'spellcheck') session.defaultSession.setSpellCheckerEnabled(value === true);
+  });
+
+  // spell:replace swaps the misspelled word of the last right-click for a suggestion. The renderer
+  // only sends the replacement text, never a range, and only right after a context menu was shown.
+  ipcMain.handle('spell:replace', (e, text) => {
+    const c = spellCtx;
+    if (!c || e.sender !== c.sender || c.sender.isDestroyed() || !c.misspelled || Date.now() - c.at > 10000) return false;
+    if (typeof text !== 'string' || text.length < 1 || text.length > 100 || CONTROL_CHARS.test(text)) return false;
+    spellCtx = null;   // one replacement per context menu
+    c.sender.replaceMisspelling(text);
+    return true;
+  });
 }
+
+// The last right-click, as reported by Chromium: lets spell:replace check it was asked for.
+let spellCtx = null;
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
+const cleanWord = (s) => typeof s === 'string' && s.length > 0 && s.length <= 100 && !CONTROL_CHARS.test(s);
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -58,6 +80,21 @@ function createWindow() {
   };
   nativeTheme.on('updated', onThemeUpdated);
   win.on('closed', () => nativeTheme.removeListener('updated', onThemeUpdated));
+
+  // The renderer cannot see the spell checker, so Chromium's right-click report is forwarded to it.
+  // x and y are in screen-scaled pixels; the page works in CSS pixels, so divide by the UI zoom.
+  win.webContents.on('context-menu', (_e, p) => {
+    const s = lib.getSettings();
+    const zoom = (s.uiScale || 100) / 100;
+    const word = s.spellcheck === true && cleanWord(p.misspelledWord) ? p.misspelledWord : '';
+    const flags = p.editFlags || {};
+    spellCtx = { at: Date.now(), sender: win.webContents, misspelled: !!word };
+    win.webContents.send('spell:context', {
+      x: p.x / zoom, y: p.y / zoom, word,
+      suggestions: word ? (p.dictionarySuggestions || []).filter(cleanWord).slice(0, 5) : [],
+      canCut: !!flags.canCut, canCopy: !!flags.canCopy, canPaste: !!flags.canPaste, inEditable: !!p.isEditable
+    });
+  });
 
   win.once('ready-to-show', () => win.show());
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));

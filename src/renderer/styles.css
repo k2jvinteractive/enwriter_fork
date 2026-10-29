@@ -847,3 +847,6 @@ kbd { display: inline-flex; gap: 3px; font: 12px var(--sans); }
 /* Secondary controls appear on hover or focus; they stay in the tab order. */
 .kb-add, .kb-reset { opacity: 0; }
 .kb-row:hover .kb-add, .kb-row:hover .kb-reset, .kb-row:focus-within .kb-add, .kb-row:focus-within .kb-reset { opacity: 1; }
+
+/* ======================= v0.6: spell check ======================= */
+.menu-item.menu-strong { font-weight: 600; }

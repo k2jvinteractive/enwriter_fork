@@ -233,7 +233,7 @@
     file.hidden = true;
     const area = make('div', 'mini-area');
     area.contentEditable = 'true';
-    area.spellcheck = true;
+    area.spellcheck = !!(emw.settings && emw.settings.get('spellcheck'));   // follows the ribbon switch (spellcheck.js)
     area.setAttribute('role', 'textbox');
     area.setAttribute('aria-multiline', 'true');
     host.append(bar, area, file);

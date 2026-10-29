@@ -46,7 +46,9 @@ function create({ app, dialog, shell, writeAtomic }) {
     tabs: { order: ['home', 'places', 'characters', 'timeline', 'manuscript', 'darlings', 'notes', 'tags'], hidden: [] },
     statsSide: 'right',   // 'left' | 'right'
     // Part 7a: only the writer's keyboard changes, { actionId: [bindings] }. An empty list means unbound.
-    shortcuts: {}
+    shortcuts: {},
+    // Part 7b: off until the writer turns it on (ribbon button, F7). Applied to the whole session by main.js.
+    spellcheck: false
   };
 
   const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
@@ -84,6 +86,7 @@ function create({ app, dialog, shell, writeAtomic }) {
       return ids(v.order) && ids(v.hidden);
     },
     statsSide: (v) => v === 'left' || v === 'right',
+    spellcheck: (v) => typeof v === 'boolean',
     // Shape only; the renderer decides which action ids it knows (unknown ones are kept for later versions).
     shortcuts: (v) => {
       if (!v || typeof v !== 'object' || Array.isArray(v)) return false;

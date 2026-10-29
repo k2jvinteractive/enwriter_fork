@@ -15,6 +15,7 @@
     typewriter: false, autosaveDelay: 600,
     tabs: { order: ['home', 'places', 'characters', 'timeline', 'manuscript', 'darlings', 'notes', 'tags'], hidden: [] },
     statsSide: 'right',
+    spellcheck: false,
     shortcuts: {}   // only the writer's changes: { actionId: ['Ctrl+K', ...] } (part 7a)
   };
   // Object defaults (tabs) are copied so nothing ever edits DEFAULTS in place.

@@ -534,11 +534,9 @@
   });
 
   // Ctrl+N on Home makes a book on the shelf that has focus (the first one otherwise).
-  document.addEventListener('keydown', (e) => {
-    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'n') return;
-    if (emw.view() !== 'home' || document.querySelector('dialog[open]')) return;
-    e.preventDefault();
-    newBook(focusedShelfId());
+  emw.keys.register({
+    id: 'newBook', label: 'New book', group: 'Library', keys: 'Ctrl+N', scope: 'home',
+    when: () => emw.view() === 'home' && !document.querySelector('dialog[open]')
   });
 
   // ---- dragging covers between shelves -----------------------------------------------------------------

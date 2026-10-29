@@ -381,12 +381,7 @@
     return null;
   }
   emw.actions.sendToDarlings = sendCurrent;
-  document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'd') {
-      e.preventDefault();
-      sendCurrent();
-    }
-  });
+  emw.keys.register({ id: 'sendToDarlings', label: 'Send to Darlings', group: 'Edit', keys: 'Ctrl+Shift+D' });
 
   // ---- the Darlings tab ------------------------------------------------------------------------------
   const listEl = $('#dl-list');

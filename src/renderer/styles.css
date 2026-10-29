@@ -818,3 +818,32 @@ dialog.big { --sc-d: color-mix(in srgb, var(--sc) var(--hue-mix), var(--ink)); }
   pointer-events: none;
 }
 .color-hint:empty { display: none; }
+
+/* ======================= v0.6: keyboard shortcuts ======================= */
+.kb-intro { margin: -8px 0 14px; }
+.kb-bar { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
+.kb-search { flex: 1; max-width: 340px; height: 30px; padding: 0 8px; margin: 0; }
+.kb-status { position: sticky; top: -22px; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 0 0 12px; padding: 8px 12px; background: var(--surface-raised); border: 1px solid var(--line); border-radius: 6px; color: var(--ink); }
+.kb-status:empty { display: none; }
+.kb-status button { padding: 4px 12px; border: 1px solid var(--border-strong); border-radius: 4px; }
+.kb-status button:hover { background: var(--hover); }
+.kb-status button:focus-visible { outline: 2px solid var(--accent-edge); outline-offset: 2px; }
+.kb-list { list-style: none; margin: 0 0 8px; padding: 0; }
+.kb-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 5px 8px; border-radius: 4px; }
+.kb-row:hover, .kb-row:focus-within { background: var(--hover); }
+.kb-name { min-width: 0; }
+.kb-binds { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
+.kb-note { color: var(--muted); font-size: 12px; }
+.kb-chip { padding: 2px; border-radius: 4px; }
+.kb-chip:hover { background: var(--pressed); }
+.kb-chip:focus-visible, .kb-add:focus-visible, .kb-reset:focus-visible { outline: 2px solid var(--accent-edge); outline-offset: 2px; }
+.kb-chip.recording { padding: 2px 10px; border: 2px dotted var(--accent-edge); color: var(--accent-text); }
+kbd { display: inline-flex; gap: 3px; font: 12px var(--sans); }
+.kb-key { padding: 1px 6px; background: var(--bg); color: var(--ink); border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 4px; }
+.kb-add { min-width: 22px; height: 22px; border: 2px dotted var(--border-dotted); border-radius: 4px; color: var(--muted); line-height: 1; }
+.kb-add:hover { border-color: var(--accent-edge); color: var(--accent-text); }
+.kb-reset { color: var(--muted); text-decoration: underline; }
+.kb-reset:hover { color: var(--ink); }
+/* Secondary controls appear on hover or focus; they stay in the tab order. */
+.kb-add, .kb-reset { opacity: 0; }
+.kb-row:hover .kb-add, .kb-row:hover .kb-reset, .kb-row:focus-within .kb-add, .kb-row:focus-within .kb-reset { opacity: 1; }

@@ -481,24 +481,21 @@
   listEl.addEventListener('dragend', () => { drag = null; emw.dragItem = null; clearMarks(); });
 
   // ---- keyboard ----------------------------------------------------------------------------
-  document.addEventListener('keydown', (e) => {
-    const mod = e.ctrlKey || e.metaKey;
-    const key = e.key.toLowerCase();
-    if (mod && !e.altKey && key === 's') { e.preventDefault(); flush(); }
-    else if (mod && !e.altKey && key === 'n' && emw.view() === 'manuscript') {
-      e.preventDefault();
-      if (e.shiftKey) newScene(); else newChapter();
-    } else if (mod && e.altKey && key === 'z') {
-      e.preventDefault();
-      if (e.shiftKey) redoStructure(); else undoStructure();
-    } else if (mod && !e.altKey && (key === 'z' || key === 'y') && onTimeline() && !emw.isTextField(e.target)) {
-      e.preventDefault();
-      if (key === 'y' || e.shiftKey) redoStructure(); else undoStructure();
-    } else if (e.altKey && !mod) {
-      const action = { Digit1: 'toggleHierarchy', Digit2: 'toggleRibbon', Digit3: 'toggleInspector' }[e.code];
-      if (action) { e.preventDefault(); emw.actions[action](); }
-    }
-  });
+  // App-level shortcuts live in the registry (shortcuts.js); the writer can see and change them in Settings.
+  const inManuscript = () => emw.view() === 'manuscript';
+  // Ctrl+Z and Ctrl+Y are native text editing keys: they only mean "store undo" on the timeline and
+  // chapter overview, outside text boxes. Any key the writer adds to Undo or Redo works everywhere.
+  const storeUndoHere = (e, combo) => !emw.keys.isNative(combo) || (!emw.isTextField(e.target) && onTimeline());
+  emw.keys.register({ id: 'save', label: 'Save', group: 'File', keys: 'Ctrl+S' });
+  emw.keys.register({ id: 'newChapter', label: 'New chapter', group: 'File', keys: 'Ctrl+N', when: inManuscript, scope: 'manuscript' });
+  emw.keys.register({ id: 'newScene', label: 'New scene', group: 'File', keys: 'Ctrl+Shift+N', when: inManuscript });
+  emw.keys.register({ id: 'undo', label: 'Undo', group: 'Edit', keys: 'Ctrl+Z', when: storeUndoHere });
+  emw.keys.register({ id: 'redo', label: 'Redo', group: 'Edit', keys: ['Ctrl+Shift+Z', 'Ctrl+Y'], when: storeUndoHere });
+  emw.keys.register({ id: 'undoStructure', label: 'Undo chapter or scene change', group: 'Edit', keys: 'Ctrl+Alt+Z' });
+  emw.keys.register({ id: 'redoStructure', label: 'Redo chapter or scene change', group: 'Edit', keys: 'Ctrl+Alt+Shift+Z' });
+  emw.keys.register({ id: 'toggleHierarchy', label: 'Pin chapters panel', group: 'View', keys: 'Alt+1' });
+  emw.keys.register({ id: 'toggleRibbon', label: 'Show ribbon', group: 'View', keys: 'Alt+2' });
+  emw.keys.register({ id: 'toggleInspector', label: 'Pin inspector', group: 'View', keys: 'Alt+3' });
 
   window.addEventListener('blur', flush);
   document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });

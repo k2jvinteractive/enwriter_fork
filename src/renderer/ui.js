@@ -155,6 +155,9 @@
       ['Pin chapters panel', 'Alt+1', 'toggleHierarchy'],
       ['Show ribbon', 'Alt+2', 'toggleRibbon'],
       ['Pin inspector', 'Alt+3', 'toggleInspector']
+    ]],
+    ['Help', [
+      ['Keyboard shortcuts…', 'Ctrl+/', 'openShortcuts']
     ]]
   ];
 
@@ -188,6 +191,17 @@
     wrap.append(btn, list);
     bar.append(wrap);
   }
+
+  // The labels above are only a fallback. Once shortcuts.js knows an action, the label shows its
+  // effective binding, so a rebound key is reflected here (and an action with no key shows none).
+  emw.refreshMenuKeys = () => {
+    for (const b of $$('.menu-item[data-action]', bar)) {
+      const id = b.dataset.action;
+      if (!emw.keys || !emw.keys.has(id)) continue;
+      b.querySelector('.keys').textContent = emw.keys.display(id);
+      b.hidden = emw.keys.isHidden(id);   // secret actions stay out of the menus until bound
+    }
+  };
 
   const closeMenus = () => $$('.menu.open', bar).forEach((m) => m.classList.remove('open'));
   bar.addEventListener('mousedown', (e) => { if (e.target.closest('.menu-item')) e.preventDefault(); });

@@ -14,7 +14,8 @@
     smartQuotes: true, quoteStyle: 'en', autoEllipsis: true, autoHighlight: false,
     typewriter: false, autosaveDelay: 600,
     tabs: { order: ['home', 'places', 'characters', 'timeline', 'manuscript', 'darlings', 'notes', 'tags'], hidden: [] },
-    statsSide: 'right'
+    statsSide: 'right',
+    shortcuts: {}   // only the writer's changes: { actionId: ['Ctrl+K', ...] } (part 7a)
   };
   // Object defaults (tabs) are copied so nothing ever edits DEFAULTS in place.
   const clone = (v) => (v && typeof v === 'object' ? JSON.parse(JSON.stringify(v)) : v);
@@ -246,11 +247,5 @@
 
   const gear = document.getElementById('open-settings');
   if (gear) gear.addEventListener('click', () => emw.actions.openSettings());
-
-  document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key === ',') {
-      e.preventDefault();
-      emw.actions.openSettings();
-    }
-  });
+  // Ctrl+, is registered in shortcuts.js (part 7a).
 })();

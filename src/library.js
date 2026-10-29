@@ -44,7 +44,9 @@ function create({ app, dialog, shell, writeAtomic }) {
     // Bottom bar (part 5d). Ids not listed in `order` are appended by the renderer, so tabs
     // added in a later version show up on their own.
     tabs: { order: ['home', 'places', 'characters', 'timeline', 'manuscript', 'darlings', 'notes', 'tags'], hidden: [] },
-    statsSide: 'right'    // 'left' | 'right'
+    statsSide: 'right',   // 'left' | 'right'
+    // Part 7a: only the writer's keyboard changes, { actionId: [bindings] }. An empty list means unbound.
+    shortcuts: {}
   };
 
   const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
@@ -52,6 +54,9 @@ function create({ app, dialog, shell, writeAtomic }) {
   // The folder the user last picked in the native dialog. settings:set only accepts a
   // libraryPath equal to this, so the renderer can never invent a path.
   let pickedFolder = null;
+
+  // Same grammar as KEY_RE in renderer/shortcuts.js: modifiers in the order Ctrl+Alt+Shift, then one key.
+  const KEY_RE = /^(Ctrl\+)?(Alt\+)?(Shift\+)?(?:[A-Z0-9]|[,./;'[\]\\=`-]|Enter|Tab|Space|Backspace|Delete|Insert|Home|End|PageUp|PageDown|Arrow(?:Up|Down|Left|Right)|Escape|F(?:[1-9]|1[0-2]))$/;
 
   const SETTING_RULES = {
     libraryPath: (v) => v === null || (typeof v === 'string' && v === pickedFolder),
@@ -78,7 +83,14 @@ function create({ app, dialog, shell, writeAtomic }) {
       const ids = (a) => Array.isArray(a) && a.length <= 40 && a.every((x) => typeof x === 'string' && /^[a-z][a-z-]{0,30}$/.test(x));
       return ids(v.order) && ids(v.hidden);
     },
-    statsSide: (v) => v === 'left' || v === 'right'
+    statsSide: (v) => v === 'left' || v === 'right',
+    // Shape only; the renderer decides which action ids it knows (unknown ones are kept for later versions).
+    shortcuts: (v) => {
+      if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+      const ids = Object.keys(v);
+      return ids.length <= 300 && ids.every((id) => id !== '__proto__' && /^[\w.-]{1,60}$/.test(id) && Array.isArray(v[id]) &&
+        v[id].length <= 10 && v[id].every((b) => typeof b === 'string' && b.length <= 40 && KEY_RE.test(b)));
+    }
   };
 
   // Keep only known keys whose values pass validation; anything else falls back to the default.

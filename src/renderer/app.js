@@ -313,14 +313,23 @@
 
   const textUndo = emw.actions.undo;
   const textRedo = emw.actions.redo;
-  // Structure undo (not text undo) applies on the timeline and on a chapter overview.
-  const onTimeline = () => !emw.isTextField(document.activeElement) &&
-    (emw.view() === 'timeline' || (emw.view() === 'manuscript' && !curId && !!curChapterId));
+  // Does Ctrl+Z mean store undo here? Decided by context, not by view name alone: the views that show
+  // structure (Timeline, a chapter overview, Characters, Places, Notes, Tags, Darlings) use store undo,
+  // unless focus is in a field with an undo of its own (a name, the filter box, the notes editor).
+  // The Manuscript with a scene open stays text undo. Part 7d added the entity tabs and Darlings.
+  const ENTITY_VIEWS = ['characters', 'places', 'notes', 'tags', 'darlings'];
+  const structureUndoHere = (target) => {
+    if (emw.isTextField(target || document.activeElement)) return false;
+    const v = emw.view();
+    if (v === 'timeline' || (v === 'manuscript' && !curId && !!curChapterId)) return true;
+    // Behind a modal dialog (Settings, the scene dialog) the keys belong to the dialog.
+    return ENTITY_VIEWS.includes(v) && !document.querySelector('dialog[open]');
+  };
 
   Object.assign(emw.actions, {
     newChapter, newScene, save: flush, duplicateScene, undoStructure, redoStructure,
-    undo: () => (onTimeline() ? undoStructure() : textUndo()),
-    redo: () => (onTimeline() ? redoStructure() : textRedo()),
+    undo: () => (structureUndoHere() ? undoStructure() : textUndo()),
+    redo: () => (structureUndoHere() ? redoStructure() : textRedo()),
     deleteCurrent: () => deleteDoc(viewId()),
     deleteScene: deleteDoc,
     openScene: (id) => { emw.showView('manuscript'); openDoc(id); }
@@ -483,9 +492,9 @@
   // ---- keyboard ----------------------------------------------------------------------------
   // App-level shortcuts live in the registry (shortcuts.js); the writer can see and change them in Settings.
   const inManuscript = () => emw.view() === 'manuscript';
-  // Ctrl+Z and Ctrl+Y are native text editing keys: they only mean "store undo" on the timeline and
-  // chapter overview, outside text boxes. Any key the writer adds to Undo or Redo works everywhere.
-  const storeUndoHere = (e, combo) => !emw.keys.isNative(combo) || (!emw.isTextField(e.target) && onTimeline());
+  // Ctrl+Z and Ctrl+Y are native text editing keys: they only mean "store undo" where structureUndoHere
+  // says so (see above), outside text boxes. Any key the writer adds to Undo or Redo works everywhere.
+  const storeUndoHere = (e, combo) => !emw.keys.isNative(combo) || structureUndoHere(e.target);
   emw.keys.register({ id: 'save', label: 'Save', group: 'File', keys: 'Ctrl+S' });
   emw.keys.register({ id: 'newChapter', label: 'New chapter', group: 'File', keys: 'Ctrl+N', when: inManuscript, scope: 'manuscript' });
   emw.keys.register({ id: 'newScene', label: 'New scene', group: 'File', keys: 'Ctrl+Shift+N', when: inManuscript });

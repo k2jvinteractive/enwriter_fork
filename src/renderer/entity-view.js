@@ -270,8 +270,10 @@
       loadContent(e);
     }
 
+    let lost = null;   // the open item left (sent to Darlings, deleted); if undo brings it back it is opened again
     function select(id, { focusName = false } = {}) {
       flushContent();
+      lost = null;       // choosing something yourself ends that
       sel = id;
       try { localStorage.setItem(lastKey(), id || ''); } catch { /* ignore */ }
       renderList();
@@ -448,7 +450,8 @@
     let stale = true;
     function onStore() {
       if (root.hidden) { stale = true; return; }
-      if (sel && !cur()) { flushContent(); sel = S.data[kind][0]?.id || null; loadDetail(); }
+      if (sel && !cur()) { flushContent(); lost = sel; sel = S.data[kind][0]?.id || null; loadDetail(); }
+      else if (lost && S.entity(kind, lost)) { select(lost); return; }   // undo put it back: its body and thumbnail load from their files
       renderList();
       refreshFields(false);
     }
@@ -469,6 +472,7 @@
       dirty = false;
       contentId = null;
       sel = null;
+      lost = null;
       filter = '';
       q('.ev-filter').value = '';
       thumbs.clear();

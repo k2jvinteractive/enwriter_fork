@@ -12,6 +12,7 @@
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { randomUUID } = require('node:crypto');
+const snapshotsModule = require('./snapshots');
 
 const FORMAT_VERSION = 1;
 const ID_RE = /^[\w-]+$/;
@@ -226,6 +227,12 @@ function create({ app, dialog, shell, writeAtomic }) {
     if (typeof id !== 'string' || !ID_RE.test(id)) throw new Error('Invalid chapter id');
     return path.join(filesDir(), id + '.html');
   };
+
+  // ---- project snapshots (part 7e) ------------------------------------------------------------
+  // Everything about snapshots lives in snapshots.js; it only needs to know where the open book is.
+  const snaps = snapshotsModule.create({ getDir: () => requireOpen().dir, shell, writeAtomic, checkVersion });
+  // While a restore swaps the files, writes from the renderer are dropped rather than landing mid-swap.
+  const writesPaused = () => snaps.isRestoring();
 
   // ---- scanning packages ------------------------------------------------------------------
   // Packages are the truth; library.json only adds shelves, order and colour on top.
@@ -474,9 +481,12 @@ function create({ app, dialog, shell, writeAtomic }) {
     const { book } = await findBook(id);
     const info = await readJson(path.join(book.dir, 'Meta', 'info.json'));
     checkVersion(info, book.folder);
+    // A restore that was interrupted (crash, power cut) is finished before anything is read.
+    try { await snaps.recover(book.dir); } catch { /* the book is opened as it is; nothing is made worse */ }
     const data = await readJson(path.join(book.dir, 'book.json'));
     if (data) checkVersion(data, book.folder);
     open = { id: book.id, dir: book.dir };
+    snaps.sweep(book.dir).catch(() => {});
     try { await setSetting('lastBookId', book.id); } catch { /* not critical */ }
     return { id: book.id, title: book.title };
   }
@@ -507,6 +517,7 @@ function create({ app, dialog, shell, writeAtomic }) {
 
   async function writeIndex(index) {
     if (!index || typeof index !== 'object') throw new Error('Invalid book data');
+    if (writesPaused()) return false;
     return writeAtomic(bookJson(), JSON.stringify(index, null, 2));
   }
 
@@ -681,14 +692,17 @@ function create({ app, dialog, shell, writeAtomic }) {
     h('chapter:read', async (id) => { try { return await fs.readFile(fileFor(id), 'utf8'); } catch { return ''; } });
     h('chapter:write', (id, html) => {
       if (typeof html !== 'string') throw new Error('Invalid content');
+      if (writesPaused()) return false;
       return writeAtomic(fileFor(id), html);
     });
     h('chapter:create', async () => {
       const id = randomUUID();
+      if (writesPaused()) return id;
       await writeAtomic(fileFor(id), '');
       return id;
     });
-    h('chapter:delete', (id) => fs.rm(fileFor(id), { force: true }));
+    h('chapter:delete', (id) => (writesPaused() ? false : fs.rm(fileFor(id), { force: true })));
+    snaps.register(h);
 
     h('library:get', () => getLibrary(true));
     h('library:write', putLibrary);
@@ -721,7 +735,13 @@ function create({ app, dialog, shell, writeAtomic }) {
     h('settings:set', setSetting);
   }
 
-  return { register, getSettings: loadSettingsSync, onSettingChange: (cb) => { changeListeners.push(cb); } };
+  // Once per launch: deleted snapshots older than a week go to the OS trash, in every book of the library.
+  async function startup() {
+    const root = await libraryRoot();
+    for (const b of await scanBooks(root)) { try { await snaps.sweep(b.dir); } catch { /* next launch */ } }
+  }
+
+  return { register, startup, getSettings: loadSettingsSync, onSettingChange: (cb) => { changeListeners.push(cb); } };
 }
 
 module.exports = { create, FORMAT_VERSION, SPELL_LANGUAGES, sanitiseWords };

@@ -219,6 +219,8 @@ app.whenReady().then(() => {
   registerIpc();
   watchDictionaryDownloads();
   createWindow();
+  // Part 7e: tidy deleted snapshots in the background; never holds up the window.
+  lib.startup().catch(() => {});
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

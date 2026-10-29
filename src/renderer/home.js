@@ -346,7 +346,7 @@
     if (title === null || !title.trim() || title.trim() === b.title) return;
     try {
       // Write the open book's pending changes first, so the rename cannot be overwritten by them.
-      if (emw.book.id === id) await emw.actions.save();
+      if (emw.book.id === id) await emw.actions.flush();
       await window.api.renameBook(id, title.trim());
       if (emw.book.id === id) emw.book.renamed(title.trim().slice(0, 200));
     } catch (err) {
@@ -593,7 +593,7 @@
   emw.onView(async (name) => {
     if (name !== 'home') return;
     // Save the open book first, so its word count and "last edited" are current on its cover.
-    try { if (emw.book.id) await emw.actions.save(); } catch { /* ignore */ }
+    try { if (emw.book.id) await emw.actions.flush(); } catch { /* ignore */ }
     await refresh();
     if (emw.view() === 'home') render();
   });

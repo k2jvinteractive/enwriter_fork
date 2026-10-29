@@ -36,6 +36,8 @@
   let dirtyText = false;
   let dirtyIndex = false;
   let chars = 0;
+  // Part 7e: while a snapshot is restored, nothing may be written (see snapshots.js). Cleared by the caller once the book has been reloaded.
+  let frozen = false;
 
   // Which chapters are folded in the tree. Kept per book, so it is read again on every switch.
   const collapsed = new Set();
@@ -191,6 +193,7 @@
   // ---- saving ---------------------------------------------------------------------
   async function flush() {
     clearTimeout(timer);
+    if (frozen) return;
     // No book open (Home with nothing opened): there is nothing to write, and the main process
     // would refuse. Drop the flags so they cannot leak into the next book.
     if (!emw.book.id) { dirtyText = false; dirtyIndex = false; return; }
@@ -205,6 +208,7 @@
 
   // Typing stays instant; counting and disk work happen after a pause.
   function scheduleSave() {
+    if (frozen) return;
     if (!dirtyText && !dirtyIndex) setSaveState('Saving…');
     clearTimeout(timer);
     timer = setTimeout(() => {
@@ -308,6 +312,15 @@
     emw.toast(label ? `Redid: ${label}` : 'Nothing to redo', { ms: 2200 });
   }
 
+  emw.freezeSave = (on) => { frozen = !!on; if (frozen) clearTimeout(timer); };
+  emw.setSaveState = setSaveState;
+  // A short-lived status ("Snapshot saved"): goes back to "Saved" after two seconds unless something else was shown since.
+  let flashTimer = 0;
+  emw.flashSaveState = (text, ms = 2000) => {
+    setSaveState(text);
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => { if (stSave.textContent === text) setSaveState('Saved'); }, ms);
+  };
   emw.curDoc = viewDoc;                       // scene or chapter, for the inspector
   emw.curChapterId = () => (curId ? null : curChapterId);   // the chapter overview shows when set
 
@@ -328,6 +341,7 @@
 
   Object.assign(emw.actions, {
     newChapter, newScene, save: flush, duplicateScene, undoStructure, redoStructure,
+    flush,   // part 7e: `save` now also takes a snapshot (snapshots.js); code that only needs pending text written calls this
     undo: () => (structureUndoHere() ? undoStructure() : textUndo()),
     redo: () => (structureUndoHere() ? redoStructure() : textRedo()),
     deleteCurrent: () => deleteDoc(viewId()),
@@ -495,7 +509,7 @@
   // Ctrl+Z and Ctrl+Y are native text editing keys: they only mean "store undo" where structureUndoHere
   // says so (see above), outside text boxes. Any key the writer adds to Undo or Redo works everywhere.
   const storeUndoHere = (e, combo) => !emw.keys.isNative(combo) || structureUndoHere(e.target);
-  emw.keys.register({ id: 'save', label: 'Save', group: 'File', keys: 'Ctrl+S' });
+  emw.keys.register({ id: 'save', label: 'Save and snapshot', group: 'File', keys: 'Ctrl+S' });
   emw.keys.register({ id: 'newChapter', label: 'New chapter', group: 'File', keys: 'Ctrl+N', when: inManuscript, scope: 'manuscript' });
   emw.keys.register({ id: 'newScene', label: 'New scene', group: 'File', keys: 'Ctrl+Shift+N', when: inManuscript });
   emw.keys.register({ id: 'undo', label: 'Undo', group: 'Edit', keys: 'Ctrl+Z', when: storeUndoHere });

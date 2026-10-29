@@ -870,3 +870,33 @@ kbd { display: inline-flex; gap: 3px; font: 12px var(--sans); }
 /* The remove control reveals on hover or focus; it stays in the tab order. */
 .st-words .chip-x { opacity: 0; }
 .st-words .chip:hover .chip-x, .st-words .chip:focus-within .chip-x { opacity: 1; }
+
+/* ======================= v0.7e: project snapshots ======================= */
+/* Show: Everything / Removed items / Snapshots, in the same style as the other tab strips. */
+.dl-modes { display: flex; gap: 2px; margin-right: 6px; }
+.dl-modes button { height: 42px; padding: 0 12px; color: var(--ink-soft); border-bottom: 2px solid transparent; }
+.dl-modes button:hover { color: var(--ink); }
+.dl-modes button[aria-selected="true"] { color: var(--accent-text); border-bottom-color: var(--accent-edge); }
+.snap-card { min-height: 150px; }
+.snap-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.dl-badge { padding: 0 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--ink-soft); font: 10.5px/16px var(--sans); }
+.snap-counts { font: 11px/1.4 var(--sans); color: var(--ink-soft); }
+/* Muted text on a card is under 4.5:1 in the dark theme (and on the selected card), so snapshot cards use the soft ink. */
+.snap-card .dl-kind, .snap-card .dl-meta { color: var(--ink-soft); }
+.snap-change { font: 11px/1.4 var(--sans); color: var(--ink-soft); }
+/* Rename and Delete stay out of sight until the card is hovered or focused; Restore is always there. */
+.dl-sec { padding: 3px 8px; border: 1px solid var(--border); border-radius: 4px; color: var(--ink-soft); font: 12px var(--sans); opacity: 0; }
+.dl-sec:hover { background: var(--hover); }
+.dl-card:hover .dl-sec, .dl-card:focus-within .dl-sec, .dl-sec:focus-visible, .dl-ph .dl-sec { opacity: 1; }
+.snap-facts { display: grid; grid-template-columns: 1fr auto; gap: 3px 16px; margin: 0 0 12px; font: 13px var(--sans); }
+.snap-facts dt { color: var(--ink-soft); }
+.snap-facts dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.snap-chapters { margin: 0; padding: 0; list-style: none; font: 13px/1.45 var(--sans); }
+.snap-row { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; }
+.snap-ch > .snap-row { font-weight: 600; color: var(--ink-heading); }
+.snap-scenes { margin: 0 0 8px; padding: 0 0 0 14px; list-style: none; color: var(--ink-soft); }
+.snap-name { min-width: 0; overflow-wrap: anywhere; }
+.snap-name.untitled { color: var(--muted); font-style: italic; }
+.snap-n { flex: none; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+/* A restore is running: the page cannot be used until the book has been read back. */
+body[inert] { cursor: progress; }

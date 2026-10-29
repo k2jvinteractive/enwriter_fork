@@ -20,7 +20,7 @@
 
   // Everything that writes to the currently open book, finished before we leave it.
   async function settle() {
-    await failSafe(() => emw.actions.save && emw.actions.save());
+    await failSafe(() => emw.actions.flush && emw.actions.flush());
     for (const f of emw.flushHooks) await failSafe(f);
   }
 

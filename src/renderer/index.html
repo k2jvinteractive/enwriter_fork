@@ -31,6 +31,7 @@
   <script src="app.js" defer></script>
   <script src="chapter-view.js" defer></script>
   <script src="darlings.js" defer></script>
+  <script src="snapshots.js" defer></script>
   <script src="inspector.js" defer></script>
   <script src="home.js" defer></script>
 </head>
@@ -238,6 +239,11 @@
     <div class="dl-main">
       <div class="tl-toolbar">
         <h1>Darlings</h1>
+        <div id="dl-modes" class="dl-modes" role="tablist" aria-label="Show">
+          <button type="button" role="tab" data-mode="all" aria-selected="true">Everything</button>
+          <button type="button" role="tab" data-mode="darlings" aria-selected="false">Removed items</button>
+          <button type="button" role="tab" data-mode="snapshots" aria-selected="false">Snapshots</button>
+        </div>
         <input id="dl-search" type="search" placeholder="Search darlings…" aria-label="Search darlings" spellcheck="false">
         <select id="dl-filter" title="Where it was sent from" aria-label="Filter by where it was sent from"></select>
         <span class="spacer"></span>

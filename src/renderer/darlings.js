@@ -29,10 +29,28 @@
   let filter = '';
   let query = '';
   let sel = '';          // the darling shown in the preview pane (view state, not data)
+  let mode = 'all';      // part 7e: 'all' | 'darlings' (removed items) | 'snapshots'
 
   function openDarlings(origin = '', selectId = '') {
     filter = origin;
     if (selectId) sel = selectId;
+    if (mode === 'snapshots') setMode('all');   // asked for a darling: show it
+    emw.showView('darlings');
+    render();
+  }
+
+  // Part 7e: the Darlings tab also holds the project's snapshots (snapshots.js draws their cards and preview).
+  const modesEl = $('#dl-modes');
+  function setMode(m) {
+    mode = m;
+    for (const b of modesEl.children) b.setAttribute('aria-selected', String(b.dataset.mode === m));
+  }
+  function openMode(m, snapshotId = '') {
+    filter = '';
+    query = '';
+    $('#dl-search').value = '';
+    setMode(m);
+    if (snapshotId && emw.snapshots) emw.snapshots.select(snapshotId);
     emw.showView('darlings');
     render();
   }
@@ -51,7 +69,7 @@
   // Items that point at files (scenes, notes, thumbnails) keep them where they are, so sending
   // only has to be sure the latest text is on disk.
   async function settleFiles() {
-    try { await emw.actions.save?.(); } catch { /* ignore */ }
+    try { await emw.actions.flush?.(); } catch { /* ignore */ }
     for (const f of emw.flushHooks) failSafe(f);
   }
 
@@ -236,7 +254,7 @@
   async function insertIntoFile(clean, rec, loaded) {
     const sid = rec.restore.sceneId;
     try {
-      await emw.actions.save?.();   // anything typed but not yet written goes first
+      await emw.actions.flush?.();   // anything typed but not yet written goes first
       const doc = new DOMParser().parseFromString((await emw.files.read(sid)) || '', 'text/html');
       const p = plan(doc.body, rec);
       insertIntoDom(doc.body, clean, rec, p);
@@ -296,7 +314,7 @@
     });
   }
 
-  emw.darlings = { send, sendSelection, sendParagraph, restore, remove, open: openDarlings };
+  emw.darlings = { send, sendSelection, sendParagraph, restore, remove, open: openDarlings, openMode, render: () => schedule(), deselect: () => { sel = ''; } };
 
   // ---- the editor's right-click menu ---------------------------------------------------------------
   editorEl.addEventListener('contextmenu', (e) => {
@@ -437,17 +455,34 @@
     if (!S.data) return;
     fillFilter();
     const all = S.data.darlings;
-    const list = all.filter((d) => (!filter || d.origin === filter) && (!query || hay(d).includes(query)));
+    const sx = emw.snapshots;
+    const showD = mode !== 'snapshots';
+    // Snapshots have no "sent from", so choosing a place in the filter leaves them out.
+    const showS = !!sx && mode !== 'darlings' && !filter;
+    filterEl.hidden = mode === 'snapshots';
+    const list = showD ? all.filter((d) => (!filter || d.origin === filter) && (!query || hay(d).includes(query))) : [];
     if (sel && !all.some((d) => d.id === sel)) sel = '';
     const focused = document.activeElement?.closest?.('.dl-card')?.dataset.id;
-    listEl.replaceChildren(...list.map(card));
+    // Darlings and snapshots share one list, newest first.
+    const items = list.map((d) => ({ at: d.createdAt || 0, node: card(d) }));
+    const snapShown = showS ? sx.cards(query) : [];
+    items.push(...snapShown);
+    items.sort((a, b) => b.at - a.at);
+    listEl.replaceChildren(...items.map((i) => i.node));
     if (focused) listEl.querySelector(`.dl-card[data-id="${focused}"]`)?.focus();
-    emptyEl.hidden = all.length > 0;
-    listEl.hidden = !all.length;
-    if (all.length && !list.length) { emptyEl.hidden = false; emptyEl.textContent = 'No darlings match.'; }
+    const have = (showD ? all.length : 0) + (showS ? sx.total() : 0);
+    emptyEl.hidden = have > 0;
+    listEl.hidden = !have;
+    if (have && !items.length) { emptyEl.hidden = false; emptyEl.textContent = mode === 'snapshots' ? 'No snapshots match.' : 'Nothing matches.'; }
+    else if (mode === 'snapshots') emptyEl.textContent = `No snapshots yet. Press ${emw.keys.display('save') || 'Save and snapshot (File menu)'} to keep a copy of the whole project.`;
     else emptyEl.textContent = 'Nothing here yet. Right-click something, or drag it onto the Darlings tab.';
-    countEl.textContent = list.length === all.length ? plural(all.length, 'darling') : `${list.length} of ${plural(all.length, 'darling')}`;
-    if (previewFor !== sel || (sel && !previewEl.firstChild)) renderPreview();
+    const parts = [];
+    if (showD) parts.push(list.length === all.length ? plural(all.length, 'darling') : `${list.length} of ${plural(all.length, 'darling')}`);
+    if (showS) parts.push(sx.countText(snapShown.length));
+    countEl.textContent = parts.join(' · ');
+    const snapSel = showS || mode === 'snapshots' ? sx?.selected() : '';
+    if (snapSel) { previewFor = null; sx.renderPreview(previewEl); }
+    else if (previewFor !== sel || (sel && !previewEl.firstChild)) renderPreview();
   }
   const schedule = () => { if (!rafId) rafId = requestAnimationFrame(render); };
 
@@ -514,6 +549,7 @@
   }
 
   function pick(id) {
+    emw.snapshots?.select('');
     sel = id;
     for (const c of listEl.children) c.setAttribute('aria-current', String(c.dataset.id === id));
     renderPreview();
@@ -529,20 +565,20 @@
 
   listEl.addEventListener('click', (e) => {
     const c = e.target.closest('.dl-card');
-    if (!c) return;
+    if (!c || c.dataset.snap) return;   // snapshot cards are handled in snapshots.js
     if (e.target.closest('.dl-restore')) { restore(c.dataset.id); return; }
     if (e.target.closest('.dl-del')) { remove(c.dataset.id); return; }
     pick(c.dataset.id);
   });
   listEl.addEventListener('keydown', (e) => {
     const c = e.target.closest?.('.dl-card');
-    if (!c || e.target !== c) return;
+    if (!c || c.dataset.snap || e.target !== c) return;
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(c.dataset.id); }
     else if (e.key === 'Delete') { e.preventDefault(); remove(c.dataset.id); }
   });
   listEl.addEventListener('contextmenu', (e) => {
     const c = e.target.closest('.dl-card');
-    if (!c) return;
+    if (!c || c.dataset.snap) return;
     e.preventDefault();
     cardMenu(c.dataset.id, e.clientX, e.clientY);
   });
@@ -553,6 +589,19 @@
   });
   searchEl.addEventListener('input', () => { query = searchEl.value.trim().toLowerCase(); schedule(); });
   filterEl.addEventListener('change', () => { filter = filterEl.value; schedule(); });
+  modesEl.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-mode]');
+    if (b) { setMode(b.dataset.mode); render(); }
+  });
+  // Arrow keys move between the three choices, as in any tab strip.
+  modesEl.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    const tabs = [...modesEl.children];
+    const next = tabs[(tabs.indexOf(document.activeElement) + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
+    e.preventDefault();
+    next.focus();
+    next.click();
+  });
 
   // ---- counts in the bottom bar --------------------------------------------------------------------------
   const countBtn = $('#st-darlings');
@@ -642,6 +691,7 @@
     filter = '';
     query = '';
     sel = '';
+    setMode('all');
     searchEl.value = '';
     updateStats();
     scheduleInspector();

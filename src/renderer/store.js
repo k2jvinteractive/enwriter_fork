@@ -73,6 +73,10 @@
     { id: 'related', name: 'related', inverse: 'related', directed: false }
   ];
   const REL_NEUTRAL = 'related';
+  // Part 7j2: the canvas geometry, published so the drawing code and the layout in 7j3 agree on where
+  // a node sits and how much room its name pill takes. genY is the centre of the circle in generation g.
+  const FT_GEO = { BAND_H: 160, R: 28, GRID: 8, PILL_W: 154, PILL_H: 20, PILL_GAP: 6 };
+  const genY = (gen) => gen * FT_GEO.BAND_H + FT_GEO.BAND_H / 2 - 12;
   const HEX = /^#[0-9a-f]{6}$/i;
   const cleanHex = (v) => (typeof v === 'string' && HEX.test(v) ? v.toLowerCase() : '');
   const cleanName = (v, max = 120) => String(v == null ? '' : v).replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, max);
@@ -547,6 +551,57 @@
     m.gen = snapGen(gen);
   }, opts);
 
+  // ---- family links (part 7j2) ---------------------------------------------------------------------
+  // A link is { id, from, to, type } and belongs to one family. The pair is undirected: "Corvin is the
+  // parent of Vanya" and "Vanya's parent is Corvin" are the same line, so a pair can hold one link of
+  // each type but never two of the same type.
+  const linkKey = (a, b) => (a < b ? a + '|' + b : b + '|' + a);
+  const findLink = (familyId, linkId) => {
+    const f = findFamily(familyId);
+    return f ? f.links.find((l) => l.id === linkId) || null : null;
+  };
+  const addFamilyLink = (familyId, from, to, type) => commit('add relationship', () => {
+    const f = findFamily(familyId);
+    if (!f) return null;
+    if (!f.members.some((m) => m.id === from) || !f.members.some((m) => m.id === to)) return null;   // both ends must be on this tree
+    if (from === to || !relType(type)) return null;                                                  // no self-links, no unknown types
+    const key = linkKey(from, to);
+    if (f.links.some((l) => linkKey(l.from, l.to) === key && l.type === type)) return null;          // the same pair and type only once
+    const link = { id: uid(), from, to, type };
+    f.links.push(link);
+    return link.id;
+  });
+  // Moving a link between two families would leave it pointing at members that are not there, so the
+  // old one is removed and a new one made in its place; both happen in one undo step.
+  const moveFamilyLink = (familyId, linkId, toFamilyId) => commit('move relationship', () => {
+    const f = findFamily(familyId), g = findFamily(toFamilyId);
+    const i = f ? f.links.findIndex((l) => l.id === linkId) : -1;
+    if (!g || i < 0 || f === g) return false;
+    const l = f.links[i];
+    if (!g.members.some((m) => m.id === l.from) || !g.members.some((m) => m.id === l.to)) return false;
+    if (g.links.some((x) => x.type === l.type && linkKey(x.from, x.to) === linkKey(l.from, l.to))) return false;
+    f.links.splice(i, 1);
+    g.links.push({ id: uid(), from: l.from, to: l.to, type: l.type });
+    return true;
+  });
+  const updateFamilyLink = (familyId, linkId, patch = {}) => commit('edit relationship', () => {
+    const l = findLink(familyId, linkId);
+    if (!l) return false;
+    if ('type' in patch && relType(patch.type)) l.type = patch.type;
+    if ('from' in patch && 'to' in patch && patch.from !== patch.to) {
+      const f = findFamily(familyId);
+      if (f && f.members.some((m) => m.id === patch.from) && f.members.some((m) => m.id === patch.to)) { l.from = patch.from; l.to = patch.to; }
+    }
+    return true;
+  }, { coalesce: `fam-link:${linkId}` });
+  const removeFamilyLink = (familyId, linkId) => commit('remove relationship', () => {
+    const f = findFamily(familyId);
+    const i = f ? f.links.findIndex((l) => l.id === linkId) : -1;
+    if (i < 0) return false;
+    f.links.splice(i, 1);
+    return true;
+  });
+
   const suggestRelationColor = () => randomColor(data.relationTypes.map((t) => t.color).filter(Boolean));
   const addRelationType = ({ name, inverse = '', color = '', directed = false } = {}) => commit('add relationship type', () => {
     const n = cleanName(name, 60);
@@ -955,6 +1010,8 @@
     addFamily, renameFamily, setFamilyColor, setFamilyImage, removeFamilyImage, deleteFamily, reorderFamilies,
     addRelationType, updateRelationType, deleteRelationType,
     addFamilyMembers, removeFamilyMember, moveFamilyMember,
+    // part 7j2: links, and the canvas geometry shared with 7j3's layout
+    FT_GEO, genY, linkKey, findLink, addFamilyLink, updateFamilyLink, removeFamilyLink, moveFamilyLink,
     setSpellLanguage, typography, setTypography,
     undo, redo, canUndo: () => undoStack.length > 0, canRedo: () => redoStack.length > 0
   };

@@ -72,7 +72,19 @@
       b.type = 'button';
       b.className = 'menu-item' + (it.danger ? ' danger-item' : '') + (it.strong ? ' menu-strong' : '');
       b.disabled = !!it.disabled;
-      if (typeof it.checked === 'boolean') {
+      if (it.dot) {
+        // Part 7j2: a relationship type, shown as its colour and read in direction. The dot is only a
+        // second way to tell the kinds apart, so it is hidden from the screen reader.
+        b.setAttribute('role', 'menuitem');
+        const row = document.createElement('span');
+        row.className = 'menu-choice';
+        const d = document.createElement('i');
+        d.className = 'menu-dot';
+        d.setAttribute('aria-hidden', 'true');
+        d.style.setProperty('--rc', it.dot);
+        row.append(d, it.label);
+        b.append(row);
+      } else if (typeof it.checked === 'boolean') {
         // A choice from a set (part 7c): a check mark in front of the current one.
         b.setAttribute('role', 'menuitemradio');
         b.setAttribute('aria-checked', String(it.checked));

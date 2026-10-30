@@ -1,9 +1,12 @@
 // Family trees, canvas part 1 (part 7j1): the SVG canvas, generation bands, character nodes, adding and
 // removing members. The data lives in the store (families[].members); this file only draws it and
-// turns gestures into store calls. Part 7j2 adds links and lines, 7j3 adds layout, export and details.
+// turns gestures into store calls. Part 7j2 adds links and lines (`emw.familyLinks`), 7j3 adds layout,
+// export and details.
 // Hooks for those parts: `.fc-node` groups carry `data-id`; `emw.familyCanvas.menuExtras` collects
 // functions that return extra items for the ≡ menu; `emw.familyCanvas.layer` is the SVG group that
 // sits between the bands and the nodes (lines go there).
+// What 7j2 uses: `emw.familyCanvas.view()` (the live view, so a rubber band can be drawn in screen
+// coordinates) and `setNodeLabel(id, text)` (an aria-label that names a node's relations).
 (() => {
   'use strict';
   const emw = window.emw;
@@ -16,6 +19,8 @@
   const BAND_H = 160, MIN_BANDS = 5, R = 28, GRID = 8, SPAN = 8000, NAME_MAX = 18;
   const Z_MIN = 0.1, Z_MAX = 2, Z_STEP = 0.1;
 
+  // The name pill under a node is sized from the same numbers the link labels use (S.FT_GEO), so both agree.
+  const PILL_W = S.FT_GEO.PILL_W, PILL_H = S.FT_GEO.PILL_H, PILL_GAP = S.FT_GEO.PILL_GAP;
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
   const sv = (tag, attrs, cls) => {
     const n = document.createElementNS(NS, tag);

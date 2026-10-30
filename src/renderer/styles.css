@@ -934,3 +934,19 @@ body[inert] { cursor: progress; }
 /* The matches are painted over the text with the Custom Highlight API; the text itself is never touched. */
 ::highlight(find-all) { background-color: var(--find-all); color: inherit; }
 ::highlight(find-current) { background-color: var(--find-current); color: var(--find-current-ink); }
+
+/* ======================= v0.7h: private shelf ======================= */
+/* The shelf itself reuses .shelf, .shelf-row and .cover. Only the lock control, the passphrase dialog and the setup row are new. */
+.shelf-private-wrap { margin-top: 30px; }
+.shelf-lock { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 4px; color: var(--muted); }
+.shelf-lock:hover { background: var(--pressed); color: var(--ink); }
+dialog.priv-dialog { width: min(320px, 90vw); }
+.priv-title { margin: 0 0 12px; font: 600 16px var(--serif); }
+.priv-dialog input { margin-bottom: 8px; }
+.priv-note { min-height: 1.4em; margin: 0 0 10px; color: var(--danger-ink); font-size: 12px; }
+.priv-box { gap: 10px; }
+.priv-box input[type=password] { width: 100%; max-width: 260px; height: 30px; padding: 0 8px; margin: 0; }
+.priv-form { gap: 8px; }
+.priv-msg { margin: 0; min-height: 1.2em; }
+.priv-key { flex-wrap: wrap; }
+.priv-keyname { padding: 2px 8px; border: 1px solid var(--line); border-radius: 4px; color: var(--ink); font: 12px var(--sans); }

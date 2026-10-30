@@ -13,6 +13,7 @@ const path = require('node:path');
 const fs = require('node:fs/promises');
 const { randomUUID } = require('node:crypto');
 const snapshotsModule = require('./snapshots');
+const privateShelfModule = require('./private-shelf');
 
 const FORMAT_VERSION = 1;
 const ID_RE = /^[\w-]+$/;
@@ -92,6 +93,11 @@ function create({ app, dialog, shell, writeAtomic }) {
 
   const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
   let settings = null;
+  // Part 7h: the private shelf's password hash. It lives in settings.json but is kept out of
+  // `settings` and DEFAULTS, so settings:get, settings:get-sync and settings:set can never read or
+  // write it. Only private-shelf.js (through saveSecret below) changes it.
+  let secret = null;
+  const serialise = (s) => JSON.stringify(secret ? { ...s, privateShelf: secret } : s, null, 2);
   // The folder the user last picked in the native dialog. settings:set only accepts a
   // libraryPath equal to this, so the renderer can never invent a path.
   let pickedFolder = null;
@@ -162,6 +168,7 @@ function create({ app, dialog, shell, writeAtomic }) {
     let saved = null;
     try { saved = JSON.parse(require('node:fs').readFileSync(settingsFile(), 'utf8')); } catch { /* missing or corrupt: defaults */ }
     settings = merged(saved);
+    secret = saved && privateShelfModule.validSecret(saved.privateShelf) ? saved.privateShelf : null;
     return settings;
   }
   const loadSettings = async () => loadSettingsSync();
@@ -171,16 +178,46 @@ function create({ app, dialog, shell, writeAtomic }) {
   const changeListeners = [];
 
   function setSetting(key, value) {
-    if (typeof key !== 'string' || !Object.prototype.hasOwnProperty.call(DEFAULTS, key)) return Promise.reject(new Error('Unknown setting'));
+    // privateShelf is not in DEFAULTS on purpose: the renderer can never write the password hash.
+    if (typeof key !== 'string' || key === 'privateShelf' || !Object.prototype.hasOwnProperty.call(DEFAULTS, key)) return Promise.reject(new Error('Unknown setting'));
     value = cleaned(key, value);
     if (!SETTING_RULES[key](value)) return Promise.reject(new Error('Invalid value for ' + key));
     const s = loadSettingsSync();
     s[key] = value;
-    const snapshot = JSON.stringify(s, null, 2);
+    const snapshot = serialise(s);
     writeChain = writeChain.catch(() => {}).then(() => writeAtomic(settingsFile(), snapshot));
     // Tell main right away (not after the disk write) so e.g. the native theme switches instantly.
     for (const cb of changeListeners) { try { cb(key, value); } catch { /* a listener must not break saving */ } }
-    return writeChain.then(() => ({ ...s }));
+    return writeChain.then(() => exposed(s));
+  }
+
+  // The password hash changes through here only.
+  function saveSecret(next) {
+    const s = loadSettingsSync();
+    secret = next;
+    const snapshot = serialise(s);
+    writeChain = writeChain.catch(() => {}).then(() => writeAtomic(settingsFile(), snapshot));
+    return writeChain;
+  }
+  const ps = privateShelfModule.create({ getSecret: () => secret, saveSecret });
+
+  // What the renderer may see of the settings: a last-opened book that is hidden counts as unset
+  // while the shelf is locked, so nothing (Home's Continue card, a fallback open) can name it.
+  function libraryRootSync() {
+    const s = loadSettingsSync();
+    return (typeof s.libraryPath === 'string' && path.isAbsolute(s.libraryPath)) ? s.libraryPath : path.join(app.getPath('documents'), 'enWriter');
+  }
+  function hiddenLockedSync(id) {
+    if (typeof id !== 'string' || ps.isUnlocked() || !secret) return false;
+    try {
+      const raw = JSON.parse(require('node:fs').readFileSync(libFile(libraryRootSync()), 'utf8'));
+      return !!(raw && raw.privateShelf && Array.isArray(raw.privateShelf.books) && raw.privateShelf.books.includes(id));
+    } catch { return false; }
+  }
+  function exposed(s) {
+    const out = { ...s };
+    if (hiddenLockedSync(out.lastBookId)) out.lastBookId = null;
+    return out;
   }
 
   // ---- library location -------------------------------------------------------------------
@@ -200,6 +237,16 @@ function create({ app, dialog, shell, writeAtomic }) {
     const rel = path.relative(path.resolve(root), path.resolve(child));
     return !!rel && !rel.startsWith('..') && !path.isAbsolute(rel);
   }
+
+  // ---- the private shelf's list of hidden books (part 7h) --------------------------------------
+  function cleanPrivate(p) {
+    const books = p && Array.isArray(p.books) ? [...new Set(p.books.filter((id) => typeof id === 'string' && ID_RE.test(id)))] : [];
+    const name = p && typeof p.name === 'string' && p.name.trim() ? p.name.trim().slice(0, 100) : 'Private';
+    return { name, books };
+  }
+  const hiddenIn = (lib) => new Set(lib.privateShelf ? lib.privateShelf.books : []);
+  // A book the renderer must not see or touch right now.
+  const isHiddenNow = (lib, id) => !ps.isUnlocked() && hiddenIn(lib).has(id);
 
   function checkVersion(obj, what) {
     const v = obj && obj.formatVersion;
@@ -276,9 +323,13 @@ function create({ app, dialog, shell, writeAtomic }) {
     return books;
   }
 
-  async function findBook(id) {
+  // A hidden book is "not found" while the shelf is locked, for every action that names a book. The one
+  // exception is opening the book that is already open (book.js puts the previous book back that way).
+  async function findBook(id, { allowOpen = false } = {}) {
     if (typeof id !== 'string' || !ID_RE.test(id)) throw new Error('Invalid book id');
     const root = await libraryRoot();
+    const { lib } = await readLibrary(root);
+    if (isHiddenNow(lib, id) && !(allowOpen && open && open.id === id)) throw new Error('Book not found');
     const hit = (await scanBooks(root)).find((b) => b.id === id);
     if (!hit) throw new Error('Book not found');
     if (!inside(root, hit.dir)) throw new Error('Book is outside the library');
@@ -293,18 +344,31 @@ function create({ app, dialog, shell, writeAtomic }) {
       formatVersion: FORMAT_VERSION,
       migrated: !!(raw && raw.migrated),
       shelves: Array.isArray(raw && raw.shelves) ? raw.shelves : [],
-      bookMeta: (raw && typeof raw.bookMeta === 'object' && raw.bookMeta) || {}
+      bookMeta: (raw && typeof raw.bookMeta === 'object' && raw.bookMeta) || {},
+      // Part 7h, additive. Without a password the list means nothing, so it is dropped and its
+      // books go back to a normal shelf the next time the library is saved.
+      privateShelf: secret ? cleanPrivate(raw && raw.privateShelf) : null
     };
     return { lib, existed: !!raw };
   }
 
-  const writeLibrary = (root, lib) => writeAtomic(libFile(root), JSON.stringify(lib, null, 2));
+  // A library.json without the private shelf is written exactly as before (no extra key).
+  const writeLibrary = (root, lib) => {
+    const { privateShelf, ...rest } = lib;
+    return writeAtomic(libFile(root), JSON.stringify(privateShelf ? { ...rest, privateShelf } : rest, null, 2));
+  };
 
   // Make the shelves agree with what is on disk: drop missing books, append unshelved ones.
   function reconcile(lib, books) {
     const ids = new Set(books.map((b) => b.id));
     const seen = new Set();
     let changed = false;
+    // Hidden books are claimed first, so they can never also sit on a normal shelf.
+    if (lib.privateShelf) {
+      const kept = lib.privateShelf.books.filter((id) => ids.has(id) && !seen.has(id) && seen.add(id));
+      if (kept.length !== lib.privateShelf.books.length) changed = true;
+      lib.privateShelf.books = kept;
+    }
     if (!lib.shelves.length) { lib.shelves.push({ id: randomUUID(), name: 'My Books', books: [] }); changed = true; }
     for (const sh of lib.shelves) {
       if (!Array.isArray(sh.books)) { sh.books = []; changed = true; }
@@ -335,12 +399,17 @@ function create({ app, dialog, shell, writeAtomic }) {
     // novel:load cannot swallow it before the person sees it.
     const notice = migrationNotice;
     if (consumeNotice) migrationNotice = null;
-    return {
+    // While locked, hidden books are left out of everything and there is no `private` key at all.
+    const unlocked = ps.isUnlocked();
+    const hidden = hiddenIn(lib);
+    const out = {
       formatVersion: FORMAT_VERSION,
       shelves: lib.shelves,
-      books: books.map((b) => publicBook(b, lib.bookMeta[b.id])),
+      books: books.filter((b) => unlocked || !hidden.has(b.id)).map((b) => publicBook(b, lib.bookMeta[b.id])),
       migrationNotice: notice
     };
+    if (unlocked && lib.privateShelf) out.private = { name: lib.privateShelf.name, books: [...lib.privateShelf.books] };
+    return out;
   }
 
   // Accepts only the fields the renderer may change, with strict shape checks.
@@ -350,19 +419,33 @@ function create({ app, dialog, shell, writeAtomic }) {
     const books = await scanBooks(root);
     const ids = new Set(books.map((b) => b.id));
     if (!input || !Array.isArray(input.shelves) || input.shelves.length > 200) throw new Error('Invalid library');
+    // Part 7h: which books are hidden can change only while unlocked. While locked the renderer
+    // knows nothing about them, so whatever it sends is ignored for them and they stay as they are.
+    const unlocked = ps.isUnlocked();
+    const hiddenBefore = hiddenIn(lib);
+    let hiddenNow = lib.privateShelf;
+    if (unlocked && lib.privateShelf && input.private && typeof input.private === 'object') {
+      const c = cleanPrivate(input.private);
+      hiddenNow = { name: c.name, books: c.books.filter((id) => ids.has(id)) };
+    }
+    const hiddenSet = new Set(hiddenNow ? hiddenNow.books : []);
     const shelves = input.shelves.map((sh) => {
       if (!sh || typeof sh.id !== 'string' || !ID_RE.test(sh.id)) throw new Error('Invalid shelf id');
       const name = typeof sh.name === 'string' ? sh.name.slice(0, 200) : 'Shelf';
-      const list = Array.isArray(sh.books) ? sh.books.filter((id) => typeof id === 'string' && ID_RE.test(id) && ids.has(id)) : [];
+      const list = Array.isArray(sh.books) ? sh.books.filter((id) => typeof id === 'string' && ID_RE.test(id) && ids.has(id) && !hiddenSet.has(id)) : [];
       return { id: sh.id, name, books: list };
     });
     lib.shelves = shelves;
+    lib.privateShelf = hiddenNow;
     if (input.bookMeta && typeof input.bookMeta === 'object') {
       const meta = {};
       for (const [id, m] of Object.entries(input.bookMeta)) {
         if (!ids.has(id) || !m || typeof m !== 'object') continue;
+        if (!unlocked && hiddenBefore.has(id)) continue;   // not the renderer's to set
         meta[id] = { color: typeof m.color === 'string' && /^#[0-9a-f]{3,8}$/i.test(m.color) ? m.color : null };
       }
+      // The colours of hidden books were never sent while locked; keep them as they were.
+      if (!unlocked) for (const id of hiddenBefore) if (lib.bookMeta[id]) meta[id] = lib.bookMeta[id];
       lib.bookMeta = meta;
     }
     reconcile(lib, books);   // never lose a book because the renderer forgot to shelve it
@@ -478,7 +561,7 @@ function create({ app, dialog, shell, writeAtomic }) {
   }
 
   async function openBook(id) {
-    const { book } = await findBook(id);
+    const { book } = await findBook(id, { allowOpen: true });
     const info = await readJson(path.join(book.dir, 'Meta', 'info.json'));
     checkVersion(info, book.folder);
     // A restore that was interrupted (crash, power cut) is finished before anything is read.
@@ -591,10 +674,13 @@ function create({ app, dialog, shell, writeAtomic }) {
     if (!st || !st.isDirectory()) throw new Error('That folder cannot be read. Choose another one.');
     const real = await realOr(p);
     // A library cannot live inside a book: walk up through every parent.
+    const hiddenHere = hiddenIn((await readLibrary(await libraryRoot())).lib);
     for (let d = real, prev = ''; d !== prev; prev = d, d = path.dirname(d)) {
       const info = await readJson(path.join(d, 'Meta', 'info.json'));
       if (d.toLowerCase().endsWith(EXT) || (info && typeof info.bookId === 'string')) {
-        throw new Error('That folder is inside a book (' + path.basename(d) + '). Choose a folder outside any .mwt book.');
+        // A hidden book is not named while the shelf is locked.
+        const secretBook = info && !ps.isUnlocked() && hiddenHere.has(info.bookId);
+        throw new Error('That folder is inside a book' + (secretBook ? '' : ' (' + path.basename(d) + ')') + '. Choose a folder outside any .mwt book.');
       }
     }
     const current = await realOr(await libraryRoot());
@@ -608,7 +694,11 @@ function create({ app, dialog, shell, writeAtomic }) {
     const raw = await readJson(libFile(p));
     if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
       checkVersion(raw, 'The library in that folder');
-      return { kind: 'library', books: (await scanBooks(p)).length, shelves: Array.isArray(raw.shelves) ? raw.shelves.length : 0 };
+      // The other library's hidden books (if any) are not counted while locked, same as our own.
+      const theirs = secret ? cleanPrivate(raw.privateShelf) : { books: [] };
+      const found = await scanBooks(p);
+      const shown = ps.isUnlocked() ? found.length : found.filter((b) => !theirs.books.includes(b.id)).length;
+      return { kind: 'library', books: shown, shelves: Array.isArray(raw.shelves) ? raw.shelves.length : 0 };
     }
     return { kind: entries.length ? 'other' : 'empty', books: 0, shelves: 0 };
   }
@@ -622,7 +712,10 @@ function create({ app, dialog, shell, writeAtomic }) {
     const root = await libraryRoot();
     const { lib } = await readLibrary(root);
     const books = await scanBooks(root);
-    return { path: root, books: books.length, shelves: Math.max(1, lib.shelves.length) };
+    // Hidden books are not counted while locked, and the private shelf is never counted as a shelf.
+    const hidden = hiddenIn(lib);
+    const count = ps.isUnlocked() ? books.length : books.filter((b) => !hidden.has(b.id)).length;
+    return { path: root, books: count, shelves: Math.max(1, lib.shelves.length) };
   }
 
   const rmQuiet = (dir) => fs.rm(dir, { recursive: true, force: true }).catch(() => {});
@@ -647,6 +740,9 @@ function create({ app, dialog, shell, writeAtomic }) {
         const srcRoot = await libraryRoot();
         const { lib } = await readLibrary(srcRoot);
         const books = await scanBooks(srcRoot);
+        // Messages never name a hidden book while the shelf is locked.
+        const hid = hiddenIn(lib);
+        const nm = (b) => (!ps.isUnlocked() && hid.has(b.id) ? 'A book' : '“' + b.title + '”');
         const made = [];
         const rollback = async () => { for (const d of made) await rmQuiet(d); await rmQuiet(libFile(dest)); };
         for (const b of books) {
@@ -657,7 +753,7 @@ function create({ app, dialog, shell, writeAtomic }) {
           try { await fs.cp(b.dir, to, { recursive: true, errorOnExist: true }); ok = await verifyCopy(b.dir, to, b.newerFormat); } catch { ok = false; }
           if (!ok) {
             await rollback();
-            throw new Error('“' + b.title + '” could not be copied and checked. Nothing was moved and all your books are still where they were.');
+            throw new Error(nm(b) + ' could not be copied and checked. Nothing was moved and all your books are still where they were.');
           }
         }
         try { await writeLibrary(dest, { ...lib, formatVersion: FORMAT_VERSION, migrated: true }); }
@@ -668,19 +764,49 @@ function create({ app, dialog, shell, writeAtomic }) {
         try { await setSetting('libraryPath', dest); }
         catch { await rollback(); throw new Error('The new location could not be saved. Nothing was moved.'); }
         open = null;
+        ps.lock();
         for (const b of books) {
           try { await shell.trashItem(b.dir); }
-          catch { notes.push('“' + b.title + '” was copied but the original could not be removed from ' + srcRoot + '.'); }
+          catch { notes.push(nm(b) + ' was copied but the original could not be removed from ' + srcRoot + '.'); }
         }
         return { mode, path: dest, moved, notes };
       }
 
       await setSetting('libraryPath', dest);
       open = null;
+      ps.lock();   // a different library: whatever was unlocked stays behind
       // The last-opened id belongs to the other library.
       try { await setSetting('lastBookId', null); } catch { /* not critical */ }
       return { mode, path: dest, moved, notes };
     } finally { relocating = false; }
+  }
+
+  // ---- private shelf: setup and removal (part 7h) -------------------------------------------------
+  // Turning it on starts from an empty list: whatever an old library.json still says about hidden
+  // books is dropped first, so no book ends up hidden behind a password it was not hidden with.
+  async function enablePrivate(password) {
+    if (ps.enabled()) throw new Error('A private shelf password is already set.');
+    const root = await libraryRoot();
+    const { lib, existed } = await readLibrary(root);   // no secret yet: privateShelf is null here
+    if (existed) { reconcile(lib, await scanBooks(root)); await writeLibrary(root, lib); }
+    await ps.set(password);
+    const after = await readLibrary(root);
+    after.lib.privateShelf = { name: 'Private', books: [] };
+    await writeLibrary(root, after.lib);
+    return true;
+  }
+
+  // Checks the password, moves every hidden book back to a normal shelf, and only then forgets the password.
+  async function disablePrivate(password) {
+    const r = await ps.check(password);
+    if (!r.ok) return r;
+    const root = await libraryRoot();
+    const { lib } = await readLibrary(root);
+    lib.privateShelf = null;                 // reconcile() puts every unshelved book on the first shelf
+    reconcile(lib, await scanBooks(root));
+    await writeLibrary(root, lib);
+    await ps.clear();
+    return { ok: true };
   }
 
   // ---- IPC --------------------------------------------------------------------------------
@@ -703,6 +829,14 @@ function create({ app, dialog, shell, writeAtomic }) {
     });
     h('chapter:delete', (id) => (writesPaused() ? false : fs.rm(fileFor(id), { force: true })));
     snaps.register(h);
+
+    // Part 7h. `status` says only whether the feature is on and whether it is unlocked.
+    h('private:status', () => ps.status());
+    h('private:set', enablePrivate);
+    h('private:change', (current, next) => ps.change(current, next));
+    h('private:unlock', (password) => ps.unlock(password));
+    h('private:lock', () => ps.lock());
+    h('private:disable', disablePrivate);
 
     h('library:get', () => getLibrary(true));
     h('library:write', putLibrary);
@@ -730,8 +864,8 @@ function create({ app, dialog, shell, writeAtomic }) {
       return true;
     });
     // Blocking read so the page can set theme, accent and zoom before its first paint.
-    ipcMain.on('settings:get-sync', (e) => { e.returnValue = { ...loadSettingsSync() }; });
-    h('settings:get', async () => ({ ...(await loadSettings()) }));
+    ipcMain.on('settings:get-sync', (e) => { e.returnValue = exposed(loadSettingsSync()); });
+    h('settings:get', async () => exposed(await loadSettings()));
     h('settings:set', setSetting);
   }
 
@@ -741,7 +875,7 @@ function create({ app, dialog, shell, writeAtomic }) {
     for (const b of await scanBooks(root)) { try { await snaps.sweep(b.dir); } catch { /* next launch */ } }
   }
 
-  return { register, startup, getSettings: loadSettingsSync, onSettingChange: (cb) => { changeListeners.push(cb); } };
+  return { register, startup, lockPrivate: () => ps.lock(), getSettings: loadSettingsSync, onSettingChange: (cb) => { changeListeners.push(cb); } };
 }
 
 module.exports = { create, FORMAT_VERSION, SPELL_LANGUAGES, sanitiseWords };

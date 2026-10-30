@@ -9,7 +9,10 @@
   const S = emw.store;
   const root = document.getElementById('view-home');
 
-  let lib = null;          // { shelves: [{id, name, books[]}], books: Map<id, book> }
+  // Part 7h: while the private shelf is unlocked, lib.private is { id: PRIV, name, books[] }. It is null
+  // otherwise, and then nothing on this screen (or in lib.books) knows those books exist.
+  const PRIV = '__private';
+  let lib = null;          // { shelves: [{id, name, books[]}], private, books: Map<id, book> }
   let lastId = null;       // the book that was open last time ("Continue writing")
   let loadError = '';
   let drag = null;         // { id } of the cover being dragged
@@ -35,7 +38,10 @@
   const plural = (n, w) => `${n.toLocaleString()} ${w}${n === 1 ? '' : 's'}`;
   const fmtDate = (t) => (t ? new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '');
   const clone = (v) => JSON.parse(JSON.stringify(v));
-  const shelf = (id) => (lib ? lib.shelves.find((s) => s.id === id) : null);
+  const allShelves = () => (lib ? [...lib.shelves, ...(lib.private ? [lib.private] : [])] : []);
+  const shelf = (id) => (lib ? allShelves().find((s) => s.id === id) || null : null);
+  const unlocked = () => !!(emw.priv && emw.priv.unlocked());
+  const isHidden = (id) => !!(lib && lib.private && lib.private.books.includes(id));
   const penName = () => String(emw.settings.get('penName') || '').trim();
   const trashName = () => (/Win/.test(navigator.platform) ? 'Recycle Bin' : 'Trash');
 
@@ -71,9 +77,13 @@
       const l = await window.api.getLibrary();
       lib = {
         shelves: l.shelves.map((s) => ({ id: s.id, name: s.name, books: [...s.books] })),
+        // Only present while unlocked (main leaves it out otherwise); also dropped here if we were just locked.
+        private: l.private && unlocked() ? { id: PRIV, name: l.private.name, books: [...l.private.books] } : null,
         books: new Map(l.books.map((b) => [b.id, b]))
       };
       loadError = '';
+      // A refresh that began just before a lock can still carry the hidden books; they are dropped here.
+      if (l.private && !unlocked()) for (const id of l.private.books) lib.books.delete(id);
       for (const id of [...covers.keys()]) if (!lib.books.get(id) || !lib.books.get(id).hasCover) covers.delete(id);
       // Reported once, by the main process, after the library moved into its new folder.
       if (l.migrationNotice) emw.toast(l.migrationNotice, { ms: 12000 });
@@ -82,6 +92,7 @@
         || 'Could not read your library.';
     }
     try { lastId = (await window.api.getSettings()).lastBookId || null; } catch { lastId = null; }
+    if (lib && lastId && !lib.books.has(lastId)) lastId = null;   // never offer a book this screen does not list
   }
 
   function saveLib() {
@@ -89,6 +100,8 @@
     const bookMeta = {};
     for (const b of lib.books.values()) if (b.color) bookMeta[b.id] = { color: b.color };
     const payload = { shelves: lib.shelves.map((s) => ({ id: s.id, name: s.name, books: [...s.books] })), bookMeta };
+    // Main ignores this unless the shelf is unlocked there too.
+    if (lib.private) payload.private = { name: lib.private.name, books: [...lib.private.books] };
     writing = writing.catch(() => {}).then(() => window.api.writeLibrary(payload))
       .catch(() => { emw.toast('Could not save your shelves. They may be back as they were next time.'); });
     return writing;
@@ -149,7 +162,8 @@
   }
 
   function shelfEl(sh) {
-    const sec = el('section', 'shelf');
+    const isPriv = sh.id === PRIV;
+    const sec = el('section', isPriv ? 'shelf shelf-private' : 'shelf');
     sec.dataset.id = sh.id;
     sec.setAttribute('aria-label', `Shelf: ${sh.name}`);
 
@@ -161,6 +175,15 @@
     k.setAttribute('aria-label', `Options for shelf ${sh.name}`);
     k.setAttribute('aria-haspopup', 'menu');
     head.append(name, k);
+    if (isPriv) {
+      // The lock control sits next to the name and stays visible: it is how the shelf is closed by hand.
+      const lk = el('button', 'shelf-lock');
+      lk.type = 'button';
+      lk.title = 'Lock';
+      lk.setAttribute('aria-label', 'Lock');
+      lk.append(icon('i-lock'));
+      head.append(lk);
+    }
 
     const row = el('div', 'shelf-row');
     row.dataset.shelf = sh.id;
@@ -216,6 +239,8 @@
     const add = el('button', 'shelf-new', '+ New shelf');
     add.type = 'button';
     root.append(shelves, add);
+    // At the very end of Home, only while unlocked.
+    if (lib.private && unlocked()) { const p = el('div', 'shelves shelf-private-wrap'); p.append(shelfEl(lib.private)); root.append(p); }
 
     // One tab stop for the whole grid; arrow keys do the rest.
     const all = cells();
@@ -257,7 +282,7 @@
     await refresh();
     // The main process puts a new book on the first shelf; move it to the shelf it was made on.
     const target = shelf(shelfId) || lib.shelves[0];
-    for (const s of lib.shelves) s.books = s.books.filter((id) => id !== made.id);
+    for (const s of allShelves()) s.books = s.books.filter((id) => id !== made.id);
     target.books.push(made.id);
     saveLib();
     render();
@@ -269,7 +294,7 @@
   function moveBook(id, shelfId, index) {
     const target = shelf(shelfId);
     if (!target) return;
-    const from = lib.shelves.find((s) => s.books.includes(id));
+    const from = allShelves().find((s) => s.books.includes(id));
     let at = index;
     if (from) {
       const i = from.books.indexOf(id);
@@ -328,6 +353,13 @@
   }
 
   function shelfMenu(id, x, y) {
+    if (id === PRIV) {
+      emw.menu(x, y, [
+        { label: 'Rename', run: () => renameShelf(id) },
+        { label: 'Lock', run: () => emw.priv.lock() }
+      ]);
+      return;
+    }
     const i = lib.shelves.findIndex((s) => s.id === id);
     emw.menu(x, y, [
       { label: 'Rename', run: () => renameShelf(id) },
@@ -451,14 +483,22 @@
     if (b.hasCover) items.push({ label: 'Remove cover image', run: () => removeCover(id) });
     items.push(
       { label: 'Move to shelf ▸', disabled: lib.shelves.length < 2, run: () => {
-        const from = lib.shelves.find((s) => s.books.includes(id));
+        const from = allShelves().find((s) => s.books.includes(id));
         emw.menu(x, y, lib.shelves.map((s) => ({
           label: s.name,
           disabled: from === s,
           run: () => moveBook(id, s.id, s.books.length)
         })));
       } },
-      { label: 'Show in folder', run: () => { window.api.revealBook(id).catch(() => emw.toast('Could not show that folder.')); } },
+      { label: 'Show in folder', run: () => { window.api.revealBook(id).catch(() => emw.toast('Could not show that folder.')); } }
+    );
+    // Only while the private shelf is unlocked; with it locked there is no trace of these items.
+    if (unlocked() && lib.private) {
+      items.push(isHidden(id)
+        ? { label: 'Move out of private shelf', run: () => moveBook(id, lib.shelves[0].id, lib.shelves[0].books.length) }
+        : { label: 'Move to private shelf', run: () => moveBook(id, PRIV, lib.private.books.length) });
+    }
+    items.push(
       null,
       { label: 'Delete', danger: true, run: () => trashBook(id) }
     );
@@ -474,6 +514,7 @@
       shelfMenu(k.closest('.shelf').dataset.id, r.left, r.bottom + 2);
       return;
     }
+    if (e.target.closest('.shelf-lock')) { emw.priv.lock(); return; }
     const cont = e.target.closest('.home-continue');
     if (cont) { if (lastId) openBook(lastId); return; }
     const slot = e.target.closest('.cover-slot');
@@ -589,6 +630,39 @@
     root.querySelectorAll('.dragging').forEach((n) => n.classList.remove('dragging'));
   });
 
+  // ---- the way in to the private shelf (part 7h) ---------------------------------------------------------
+  // Press and hold the pen name for 1.5 s. A click or a text selection does nothing, and the name looks and
+  // behaves like any other text. With no pen name set, the greeting itself takes its place. While there is
+  // no password nothing here reacts at all.
+  const HOLD_MS = 1500, HOLD_SLOP = 6;
+  let hold = null;   // { timer, x, y }
+  const cancelHold = () => { if (hold) { clearTimeout(hold.timer); hold = null; } };
+  root.addEventListener('pointerdown', (e) => {
+    cancelHold();
+    if (e.button !== 0 || !emw.priv || !emw.priv.enabled() || emw.priv.unlocked()) return;
+    const hit = e.target.closest ? (e.target.closest('.home-greet em') || (!penName() && e.target.closest('.home-greet'))) : null;
+    if (!hit) return;
+    hold = { x: e.clientX, y: e.clientY, timer: setTimeout(() => { hold = null; emw.priv.open(); }, HOLD_MS) };
+  });
+  root.addEventListener('pointermove', (e) => { if (hold && Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > HOLD_SLOP) cancelHold(); });
+  for (const t of ['pointerup', 'pointercancel', 'dragstart', 'contextmenu']) root.addEventListener(t, cancelHold);
+  root.addEventListener('pointerleave', cancelHold);
+  window.addEventListener('blur', cancelHold);
+
+  // Locking takes the shelf off the screen at once, before anything is asked of the main process.
+  if (emw.priv) {
+    emw.priv.onChange((isUnlocked) => {
+      if (isUnlocked) { if (emw.view() === 'home') { refresh().then(() => { if (emw.view() === 'home') render(); }); } return; }
+      cancelHold();
+      if (lib) {
+        if (lib.private) for (const id of lib.private.books) { lib.books.delete(id); covers.delete(id); }
+        lib.private = null;
+        if (lastId && !lib.books.has(lastId)) lastId = null;
+        render();
+      }
+    });
+  }
+
   // ---- wiring ------------------------------------------------------------------------------------------
   emw.onView(async (name) => {
     if (name !== 'home') return;
@@ -600,7 +674,11 @@
   emw.settings.onChange((key) => { if (key === 'penName' && emw.view() === 'home' && lib) render(); });
 
   emw.actions.newBook = () => newBook(focusedShelfId());
-  emw.home = { refresh: async () => { await refresh(); if (emw.view() === 'home') render(); } };
+  emw.home = {
+    refresh: async () => { await refresh(); if (emw.view() === 'home') render(); },
+    // Resolves when every change to the shelves has reached the main process.
+    settle: () => writing
+  };
 
   // Start: nothing is open. The store gets an empty placeholder so views never meet null.
   if (!S.data) S.load({});

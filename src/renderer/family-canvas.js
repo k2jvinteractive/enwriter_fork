@@ -6,7 +6,11 @@
 // functions that return extra items for the ≡ menu; `emw.familyCanvas.layer` is the SVG group that
 // sits between the bands and the nodes (lines go there).
 // What 7j2 uses: `emw.familyCanvas.view()` (the live view, so a rubber band can be drawn in screen
-// coordinates) and `setNodeLabel(id, text)` (an aria-label that names a node's relations).
+// coordinates) and `setNodeLabel(id, text)` (an aria-label that names a node's relations);
+// `beginConnect(id)` starts one from the keyboard; every `.fc-node` carries `data-x`, `data-gen`
+// and `data-y` so the links module can place lines without knowing this file's geometry helpers.
+// A connect drag is cancelled by `stopConnect(true)`, which `emw.familyLinks` reaches through
+// `emw.familyCanvas.connecting()` / `cancelConnect()`.
 (() => {
   'use strict';
   const emw = window.emw;
@@ -56,6 +60,20 @@
   const family = () => S.family(famId);
   const charOf = (id) => (S.data && S.data.characters.find((c) => c.id === id)) || null;
   const nameOf = (c) => (c && c.name) || 'Unnamed character';
+
+  // A quiet live region for the canvas: connect drags and line edits are transient, so they must not
+  // use a toast (which offers Undo and takes clicks). role="status" is announced politely.
+  let statusEl = null;
+  function announce(msg) {
+    try {
+      if (!statusEl || !statusEl.isConnected) {
+        statusEl = el('span', 'fc-status');
+        statusEl.setAttribute('role', 'status');
+        (live && live.isConnected ? live : document.body).append(statusEl);
+      }
+      statusEl.textContent = msg;
+    } catch { /* announcements are never essential */ }
+  }
 
   // ---- the skeleton --------------------------------------------------------------------------------
   function mount() {
@@ -183,11 +201,16 @@
     bandsG.replaceChildren(...rects);
   }
 
-  function nodeEl(m, f) {
+  const nodeEl = (m, f) => {
     const c = charOf(m.id);
+    const cy = bandY(m.gen);
     const g = sv('g', {}, 'fc-node');
     g.dataset.id = m.id;
-    g.setAttribute('transform', `translate(${m.x} ${bandY(m.gen)})`);
+    // The links module (7j2) places lines from these: the world position of the circle's centre.
+    g.dataset.x = m.x;
+    g.dataset.gen = m.gen;
+    g.dataset.y = cy;
+    g.setAttribute('transform', `translate(${m.x} ${cy})`);
     g.setAttribute('tabindex', '0');
     g.setAttribute('role', 'button');
     g.setAttribute('aria-label', nameOf(c));
@@ -206,16 +229,34 @@
       g.append(u);
     }
     g.append(ring);
+    // The connect handle (part 7j2): dragged onto another node to make a relationship. It is drawn on
+    // hover or keyboard focus only (CSS), so it never gets in the way of moving a node.
+    const handle = sv('circle', { cx: R - 9, cy: -(R - 9), r: 10 }, 'fc-handle');
+    handle.dataset.handle = m.id;
+    const hRing = sv('circle', { cx: R - 9, cy: -(R - 9), r: 5 }, 'fc-handle-mark');
+    hRing.dataset.handle = m.id;
+    hRing.setAttribute('aria-hidden', 'true');
+    g.append(handle, hRing);
     const full = nameOf(c);
     const shown = full.length > NAME_MAX ? full.slice(0, NAME_MAX - 1) + '…' : full;
     const w = Math.max(40, shown.length * 7.2 + 18);
-    const pill = sv('rect', { x: -w / 2, y: R + 6, width: w, height: 20, rx: 10 }, 'fc-pill');
-    const t = sv('text', { x: 0, y: R + 20, 'text-anchor': 'middle' }, 'fc-name');
+    const pill = sv('rect', { x: -w / 2, y: R + 6, width: w, height: PILL_H, rx: PILL_H / 2 }, 'fc-pill');
+    const t = sv('text', { x: 0, y: R + 6 + PILL_H - 5, 'text-anchor': 'middle' }, 'fc-name');
     t.textContent = shown;
     const title = sv('title');
     title.textContent = full;
     g.append(pill, t, title);
     return g;
+  };
+
+  // Part 7j2: the accessible name that names a node's relations. Only the label is touched, so the
+  // line labels can be refreshed without redrawing the nodes (and losing focus).
+  function setNodeLabel(id, text) {
+    if (!live || !live.isConnected) return false;
+    const n = nodesG.querySelector(`.fc-node[data-id="${id}"]`);
+    if (!n || !text) return false;
+    n.setAttribute('aria-label', text);
+    return true;
   }
 
   function render() {
@@ -224,10 +265,18 @@
     if (!f) return;
     svg.style.setProperty('--fc', f.color);
     const had = document.activeElement?.closest?.('.fc-node')?.dataset.id || '';
+    const onHandle = gesture && gesture.kind === 'connect' ? gesture.from : '';
     if (selChar && !f.members.some((m) => m.id === selChar)) selChar = '';
     drawBands(f);
     nodesG.replaceChildren(...f.members.filter((m) => charOf(m.id)).map((m) => nodeEl(m, f)));
     emptyEl.hidden = f.members.length > 0;
+    // The links module draws into `layer` after the nodes exist, so lines can read their ends' positions.
+    try { emw.familyLinks?.redraw?.(); } catch { /* a failed redraw must not lose the nodes */ }
+    if (onHandle) {
+      // A connect drag is in progress: keep its start node marked and stay out of the way of the drag.
+      const n = nodesG.querySelector(`.fc-node[data-id="${onHandle}"]`);
+      if (n) n.classList.add('connecting'); else gesture = null;
+    }
     if (had && live.contains(document.activeElement) === false) {
       // The node that had focus was redrawn; give focus to its replacement (or the canvas if it is gone).
       const back = nodesG.querySelector(`.fc-node[data-id="${had}"]`);
@@ -255,18 +304,75 @@
     setSel(id);
     emw.menu(x, y, [
       { label: 'Open character', run: () => openChar(id) },
+      { label: 'Connect to…', run: () => beginConnect(id) },
       null,
       { label: 'Remove from family', danger: true, run: () => removeMember(id) }
     ]);
   }
 
+  // ---- connect drags (part 7j2) --------------------------------------------------------------------------
+  // The gesture itself is handled here because this file owns the pointer capture; what happens when
+  // the drag lands is `emw.familyLinks.connectDrop`. A keyboard user reaches the same thing through
+  // "Connect to…" in the node menu (beginConnect), which aims at the nearest other node.
+  const dropTarget = (e) => {
+    const n = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('.fc-node');
+    return n && !n.classList.contains('connecting') ? n.dataset.id : '';
+  };
+
+  function beginConnect(id) {
+    const f = family();
+    if (!f || !f.members.some((m) => m.id === id)) return false;
+    const me = nodesG.querySelector(`.fc-node[data-id="${id}"]`);
+    if (!me) return false;
+    setSel(id);
+    gesture = { kind: 'connect', from: id, el: me, sx: 0, sy: 0, moved: true, aim: true, over: '' };
+    me.classList.add('connecting');
+    live.classList.add('connecting');
+    try {
+      const r = me.getBoundingClientRect();
+      emw.familyLinks?.showRubber?.(r.left + r.width / 2, r.top + r.height / 2, r.left + r.width / 2, r.top);
+    } catch { /* the rubber band is a nicety */ }
+    announce(`Connecting ${nameOf(charOf(id))}. Use Tab and Enter to choose another character, or Escape to stop.`);
+    return true;
+  }
+
+  // Keyboard connecting: Enter on a node while a connect is pending finishes it.
+  function finishConnect(id) {
+    const g = gesture;
+    if (!g || g.kind !== 'connect') return false;
+    stopConnect(false);
+    emw.familyLinks?.connectDrop?.(g.from, id);
+    return true;
+  }
+
+  function stopConnect(cancelled) {
+    const g = gesture;
+    if (!g || g.kind !== 'connect') return;
+    if (g.el) g.el.classList.remove('connecting');
+    live.classList.remove('connecting');
+    emw.familyLinks?.hideRubber?.();
+    gesture = null;
+    if (cancelled) announce('Connection cancelled.');
+  }
+
   // ---- pointer: pan, zoom, drag ------------------------------------------------------------------------------
-  let gesture = null;   // { kind: 'pan'|'node', ... }
+  let gesture = null;   // { kind: 'pan'|'node'|'connect', ... }
 
   function bind() {
     svg.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       const node = e.target.closest('.fc-node');
+      if (node && String(e.target.dataset.handle || '') === node.dataset.id && !spaceDown) {
+        // The handle is dragged to make a relationship, not to move the node.
+        e.preventDefault();
+        const id = node.dataset.id;
+        gesture = { kind: 'connect', from: id, el: node, sx: e.clientX, sy: e.clientY, moved: true, aim: false, over: '' };
+        node.classList.add('connecting');
+        live.classList.add('connecting');
+        setSel(id);
+        svg.setPointerCapture(e.pointerId);
+        return;
+      }
       if (node && !spaceDown) {
         const f = family();
         const m = f && f.members.find((n) => n.id === node.dataset.id);
@@ -293,6 +399,18 @@
         applyView(false);
         return;
       }
+      if (gesture.kind === 'connect') {
+        // The rubber band follows the pointer; the node under it is marked as the drop target.
+        const over = dropTarget(e);
+        if (over !== gesture.over) {
+          if (gesture.over) nodesG.querySelector(`.fc-node[data-id="${gesture.over}"]`)?.classList.remove('drop-over');
+          gesture.over = over;
+          if (over) nodesG.querySelector(`.fc-node[data-id="${over}"]`)?.classList.add('drop-over');
+        }
+        const r0 = gesture.el.getBoundingClientRect();
+        emw.familyLinks?.showRubber?.(r0.left + r0.width / 2, r0.top + r0.height / 2, e.clientX, e.clientY);
+        return;
+      }
       if (!gesture.moved && Math.hypot(e.clientX - gesture.sx, e.clientY - gesture.sy) < 4) return;   // a click, not a drag
       gesture.moved = true;
       const p = toWorld(e);
@@ -300,6 +418,8 @@
       gesture.gen = genAt(p.y - gesture.oy + 12);   // the band holding the circle's centre (bandY is 12 above the band's middle)
       gesture.el.classList.add('dragging');
       gesture.el.setAttribute('transform', `translate(${gesture.x} ${bandY(gesture.gen)})`);
+      // Lines follow their ends while the node moves (they are redrawn from the DOM position).
+      try { emw.familyLinks?.redrawLive?.(); } catch { /* cosmetic only */ }
     });
     const end = (e) => {
       if (!gesture) return;
@@ -307,8 +427,16 @@
       gesture = null;
       live.classList.remove('panning');
       try { svg.releasePointerCapture(e.pointerId); } catch { /* already released */ }
+      if (g.kind === 'connect') {
+        // Landing on another node opens the type picker; anywhere else simply stops.
+        stopConnect(false);
+        const over = g.over || dropTarget(e);
+        if (over) emw.familyLinks?.connectDrop?.(g.from, over);
+        else announce('Connection cancelled.');
+        return;
+      }
       if (g.kind === 'pan') { applyView(); return; }
-      g.el.classList.remove('dragging');
+      if (g.kind === 'node') g.el.classList.remove('dragging');
       if (g.moved) {
         const f = family();
         const m = f && f.members.find((n) => n.id === g.id);
@@ -350,7 +478,15 @@
       const id = node.dataset.id;
       const m = f.members.find((n) => n.id === id);
       if (!m) return;
-      if (e.key === 'Enter') { e.preventDefault(); openChar(id); return; }
+      // Escape stops a connect that is in progress, wherever the focus has got to.
+      if (e.key === 'Escape' && gesture && gesture.kind === 'connect') { e.preventDefault(); stopConnect(true); return; }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (gesture && gesture.kind === 'connect' && gesture.from !== id) finishConnect(id);   // keyboard: pick the other end
+        else if (gesture && gesture.kind === 'connect') stopConnect(true);
+        else openChar(id);
+        return;
+      }
       if (e.key === ' ') { e.preventDefault(); setSel(selChar === id ? '' : id); return; }
       if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); removeMember(id); return; }
       if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
@@ -506,7 +642,21 @@
   });
   emw.book.onSwitch(() => { famId = ''; selChar = ''; views.clear(); needFit.clear(); thumbs.clear(); live = null; });
 
-  emw.familyCanvas = { menuExtras, get layer() { return layer; }, fit: () => fitView(), addCharacters: openPicker };
+  emw.familyCanvas = {
+    menuExtras,
+    get layer() { return layer; },
+    get nodes() { return nodesG; },
+    fit: () => fitView(),
+    addCharacters: openPicker,
+    setNodeLabel,
+    announce,
+    // Part 7j2: the live view (so a rubber band can be drawn in screen coordinates) and the connect hooks.
+    view: () => ({ z, x: px, y: py, familyId: famId }),
+    beginConnect,
+    connecting: () => !!(gesture && gesture.kind === 'connect'),
+    cancelConnect: () => stopConnect(true),
+    selected: () => selChar
+  };
   emw.actions.familyAddCharacter = () => { if (ft.active() && family()) openPicker(); };
   emw.keys.register({ id: 'familyAddCharacter', label: 'Add character to family tree', group: 'Navigate', when: () => ft.active() && !!family() && !document.querySelector('dialog[open]') });
 })();

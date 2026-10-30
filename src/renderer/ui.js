@@ -82,7 +82,10 @@
         d.className = 'menu-dot';
         d.setAttribute('aria-hidden', 'true');
         d.style.setProperty('--rc', it.dot);
-        row.append(d, it.label);
+        const lab = document.createElement('span');
+        lab.className = 'menu-lab';
+        lab.textContent = it.label;
+        row.append(d, lab);
         b.append(row);
       } else if (typeof it.checked === 'boolean') {
         // A choice from a set (part 7c): a check mark in front of the current one.

@@ -26,7 +26,6 @@
   const DETOUR = 22;                      // clearance kept from other nodes
   const ARROW = 7;                        // arrowhead for directed types
   const LABEL_MAX = 30;                   // characters in a pill label before it is shortened
-  const DIM = 'var(--link-dim)';
 
   const sv = (tag, attrs, cls) => {
     const n = document.createElementNS('http://www.w3.org/2000/svg', tag);
@@ -34,6 +33,9 @@
     for (const k in attrs || {}) n.setAttribute(k, attrs[k]);
     return n;
   };
+  // SVG elements ignore the HTML dataset property, so every data-* on one of them goes through here.
+  const sd = (node, key, value) => node.setAttribute('data-' + key, String(value));
+  const gd = (node, key) => node.getAttribute('data-' + key);
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
   const btn = (cls, label, text) => { const b = el('button', cls, text); b.type = 'button'; if (label) { b.setAttribute('aria-label', label); b.title = label; } return b; };
   const icon = (id) => { const s = sv('svg', { 'aria-hidden': 'true' }, 'ic'); s.append(sv('use', { href: '#' + id })); return s; };
@@ -43,7 +45,6 @@
     const c = S.data && S.data.characters.find((x) => x.id === id);
     return (c && c.name) || 'Unnamed character';
   };
-  const fmt = (n) => String(n).replace(/\.0+$/, '').replace(/(\.\d*[1-9])0+$/, '$1');
 
   // ---- state (view only; the data stays in the store) -------------------------------------------------
   let famId = '';
@@ -52,33 +53,51 @@
   let legendOpen = false;      // remembered per book, like the panel states
   let host = null, rubber = null;
   const paths = new Map();     // link id -> { g, hit, line, lab, labW }
-  const livePos = new Map();   // character id -> { x, y }: positions during a node drag (the DOM is not yet redrawn)
+  const livePos = new Map();   // character id -> { id, x, y, gen }: where a node is mid-drag, before the store catches up
 
   const family = () => S.family(famId);
-  const relColor = (t) => { try { return ft.relColor(t); } catch { return 'var(--rel-related)'; } } ;
-  const typeOf = (id) => S.relType(id) || S.relType(S.REL_NEUTRAL) || { id: S.REL_NEUTRAL, name: 'related', inverse: 'related', directed: false };
+  // family-tree.js owns the blend. If it ever answers with something CSS cannot parse, fall back to a
+  // plain token so the line still draws: an invalid custom property would blank every stroke at once.
+  // (A built-in id is always one of the four --rel-* tokens; a custom type keeps its own colour.)
+  const SAFE_COLOR = /^(var\(--[\w-]+\)|#[0-9a-f]{3,8}|color-mix|rgb[a]?|hsl[a])/i;
+  const relColor = (t) => {
+    let c = '';
+    try { c = ft.relColor(t); } catch { c = ''; }
+    if (!c || !SAFE_COLOR.test(c.trim())) c = t && t.builtin ? `var(--rel-${t.id})` : 'var(--rel-related)';
+    return c;
+  };
+  const FALLBACK_TYPE = { id: S.REL_NEUTRAL, name: 'related', inverse: 'related', directed: false, builtin: true };
+  const typeOf = (id) => S.relType(id) || S.relType(S.REL_NEUTRAL) || FALLBACK_TYPE;
   const keyOf = () => { try { return emw.book.key('familyLegend'); } catch { return 'emwriter.familyLegend'; } };
 
   // ---- geometry ------------------------------------------------------------------------------------------
-  // A node's centre comes from the canvas element itself, or from the live drag position.
+  // A node's centre comes from the canvas element itself, or from the live drag position. The canvas
+  // writes data-x and data-gen on every node; the y of a circle is always genY(gen), so lines and
+  // nodes cannot drift apart even if one of them is redrawn without the other.
   function posOf(id) {
     if (livePos.has(id)) return livePos.get(id);
     const n = fc.nodes && fc.nodes.querySelector(`.fc-node[data-id="${id}"]`);
-    if (n) return { x: Number(n.dataset.x) || 0, y: Number(n.dataset.y) || 0, gen: Number(n.dataset.gen) || 0 };
+    if (n) {
+      const gen = Number(n.getAttribute('data-gen')) || 0;
+      return { id, x: Number(n.getAttribute('data-x')) || 0, y: S.genY(gen), gen };
+    }
     const m = family() && family().members.find((x) => x.id === id);
     if (!m) return null;
-    return { x: m.x, y: S.genY(m.gen), gen: m.gen };
+    return { id, x: m.x, y: S.genY(m.gen), gen: m.gen };
   }
   const boxOf = (p) => ({ x0: p.x - R, x1: p.x + R, y0: p.y - R, y1: p.y + R + G.PILL_GAP + G.PILL_H });
   const midX = (a, b) => (Math.abs(a.x) < 1e-6 && Math.abs(b.x) < 1e-6 ? 0 : (a.x + b.x) / 2);
+  // Path text stays short: two decimals at most, which is far below a pixel at any zoom.
+  const fmt = (n) => String(Math.round(Number(n) * 100) / 100);
 
   // How far a horizontal run at height y must bow to keep clear of every node it crosses.
   function lift(y, x0, x1, skip) {
     let dy = 0;
-    for (const [id, p] of allPos()) {
-      if (skip.includes(id)) continue;
+    for (const [, p] of allPos()) {
+      if (skip.includes(p.id)) continue;
       const b = boxOf(p);
-      if (b.x0 > Math.min(x0, x1) - DETOUR || b.x1 < Math.max(x0, x1) + DETOUR) continue;
+      // Only a node that actually sits between the two ends can block the run.
+      if (b.x1 < Math.min(x0, x1) + DETOUR || b.x0 > Math.max(x0, x1) - DETOUR) continue;
       if (y >= b.y0 - DETOUR && y <= b.y1 + DETOUR) dy = Math.max(dy, (y - b.y0) + DETOUR * 2);
     }
     return dy;
@@ -115,69 +134,90 @@
     return `M${ax},${fmt(y)} Q${fmt(midX(a, b))},${fmt(y - dy)} ${bx},${fmt(y)}`;
   }
 
-  // Any other pair: a single arc, bowed away from the middle node when three sit in a row.
+  // Any other pair: a single arc, bowed away from a node that sits right on top of the middle.
   function arcRun(a, b) {
     const dx = b.x - a.x, dy = b.y - a.y;
     const len = Math.hypot(dx, dy) || 1;
-    let mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
     let nx = -dy / len, ny = dx / len;             // normal to the segment
     if (ny > 0) { nx = -nx; ny = -ny; }            // always bow upward: reads better among bands
     let off = len * ARC_LIFT;
-    for (const [id, p] of allPos()) {
-      if (id === a.id || id === b.id) continue;
-      if (Math.hypot(p.x - mx, p.y - my) < R * 2.4) off = Math.max(off, R * 2.4 - Math.hypot(p.x - mx, p.y - my) + DETOUR);
+    for (const [, p] of allPos()) {
+      if (p.id === a.id || p.id === b.id) continue;
+      const d = Math.hypot(p.x - mx, p.y - my);
+      if (d < R * 2.4) off = Math.max(off, R * 2.4 - d + DETOUR);
     }
-    const d = `M${fmt(a.x + (dx / len) * R)},${fmt(a.y + (dy / len) * R)} Q${fmt(mx + nx * off)},${fmt(my + ny * off)} ${fmt(b.x - (dx / len) * R)},${fmt(b.y - (dy / len) * R)}`;
-    return { d, end: { x: b.x - (dx / len) * R, y: b.y - (dy / len) * R }, from: { x: mx + nx * off, y: my + ny * off } };
+    const p0 = { x: a.x + (dx / len) * R, y: a.y + (dy / len) * R };
+    const p2 = { x: b.x - (dx / len) * R, y: b.y - (dy / len) * R };
+    const ctrl = { x: mx + nx * off, y: my + ny * off };
+    return { d: `M${fmt(p0.x)},${fmt(p0.y)} Q${fmt(ctrl.x)},${fmt(ctrl.y)} ${fmt(p2.x)},${fmt(p2.y)}`, p0, p2, ctrl };
   }
 
   // Where a pill naming a link sits: the visual middle of its path.
-  function pillAt(a, b, bus, kind) {
+  function pillAt(kind, a, b, bus, rows, arc) {
     if (kind === 'elbow') return { x: (a.x + b.x) / 2, y: bus + 11 };
-    if (kind === 'h') { const y = a.y + ROW_STEP * (arguments[4] || 0); return { x: (a.x + b.x) / 2, y: y - 12 }; }
-    const r = arcRun(a, b);
-    return { x: (r.end.x + r.from.x * 2 + a.x) / 4, y: (r.end.y + r.from.y * 2 + a.y) / 4 - 10 };
+    if (kind === 'h') return { x: (a.x + b.x) / 2, y: a.y + ROW_STEP * rows - 12 };
+    if (kind === 'v') return { x: a.x, y: (a.y + b.y) / 2 };
+    const t = 0.5, mt = 1 - t;                     // the point halfway along a quadratic curve
+    return { x: mt * mt * arc.p0.x + 2 * mt * t * arc.ctrl.x + t * t * arc.p2.x,
+             y: mt * mt * arc.p0.y + 2 * mt * t * arc.ctrl.y + t * t * arc.p2.y };
   }
 
   // ---- drawing one link ---------------------------------------------------------------------------------
+  // `ctx` carries the buses and rows worked out for the whole set, plus how many links have already
+  // been drawn over the same pair, so a second line stops short instead of sitting on the first.
   function buildLink(l, ctx) {
     const a = posOf(l.from), b = posOf(l.to);
     if (!a || !b) return null;
     const t = typeOf(l.type);
     const sameGen = a.gen === b.gen;
     const vertical = Math.abs(a.x - b.x) < 1;
-    let d = '', kind = 'arc', bus = 0, rows = 0;
+    const key = S.linkKey(l.from, l.to);
+    const seen = ctx.seen.get(key) || 0;
+    ctx.seen.set(key, seen + 1);
+    let kind = 'arc', bus = 0, rows = 0, arc = null, p0 = null, p2 = null;
 
-    const isParentish = l.type === 'parent' || (t.directed && !sameGen && !vertical && false);
-    if (l.type === 'parent') {
-      // Parent above child: the classic elbow on the parent's shared bus. Below: the same shape upside down.
-      if (a.gen < b.gen) { kind = 'elbow'; bus = ctx.bus.get(l.from); if (bus === undefined) bus = a.y + R + ELBOW_DY; d = elbowPoints(a, b, bus); }
-      else if (a.gen > b.gen) { kind = 'elbow'; bus = ctx.bus.get(l.to); if (bus === undefined) bus = b.y + R + ELBOW_DY; d = elbowPoints(b, a, bus); }
-      else { kind = 'arc'; }
-    } else if (!t.directed && sameGen && !vertical) {
-      // Spouse and sibling lines: horizontal between the circles, stepped so parallels do not overlap.
-      kind = 'h';
-      rows = ctx.rows.get(S.linkKey(l.from, l.to)) || 0;
-      const y = a.y + ROW_STEP * rows - 4;
-      d = hRun({ ...a, id: l.from }, { ...b, id: l.to }, y);
-    } else if (vertical && a.gen !== b.gen) {
-      // One above the other: a short vertical run, arrow included by the caller.
-      kind = 'v';
-      const up = a.gen < b.gen;
-      d = `M${fmt(a.x)},${fmt(up ? a.y + R : a.y - R)} L${fmt(b.x)},${fmt(up ? b.y - R - (t.directed ? ARROW : 0) : b.y + R + (t.directed ? ARROW : 0))}`;
-    } else if (t.directed && a.gen !== b.gen) {
-      // A directed custom type between different generations still reads top-down.
+    if ((l.type === 'parent' || t.directed) && !sameGen) {
+      // Parent above child: the classic elbow on the parent's shared bus. The other way round, the same
+      // shape upside down, because that child may have children of its own on the same bus.
       kind = 'elbow';
       const par = a.gen < b.gen ? a : b, kid = a.gen < b.gen ? b : a;
       bus = ctx.bus.get(par.id);
       if (bus === undefined) bus = par.y + R + ELBOW_DY;
-      d = elbowPoints(par, kid, bus);
+    } else if (!t.directed && sameGen && !vertical) {
+      // Spouse and sibling lines: horizontal between the circles, stepped so parallels do not overlap.
+      kind = 'h';
+      rows = ctx.rows.get(key) || 0;
+    } else if (vertical && !sameGen) {
+      kind = 'v';
     } else {
-      const r = arcRun({ ...a, id: l.from }, { ...b, id: l.to });
-      d = r.d;
+      kind = 'arc';
     }
 
-    const g = sv('g', { 'data-link': l.id, 'data-type': l.type, role: 'presentation' }, 'fc-link');
+    // A second line over a pair starts further out of the left-hand circle, so two spouse/sibling
+    // links read as separate strokes rather than one thick one.
+    const inset = seen * 7;
+    let d = '';
+    if (kind === 'elbow') {
+      const par = a.gen < b.gen ? a : b, kid = a.gen < b.gen ? b : a;
+      p0 = { x: par.x, y: par.y + R + inset }; p2 = { x: kid.x, y: kid.y - R };
+      d = elbowPoints({ ...par, y: par.y + inset }, kid, bus);
+    } else if (kind === 'h') {
+      p0 = { x: a.x + R + inset, y: a.y }; p2 = { x: b.x - R, y: b.y };
+      d = hRun({ ...a, x: a.x - inset }, b, a.y + ROW_STEP * rows - 4);
+    } else if (kind === 'v') {
+      const up = a.gen < b.gen;
+      p0 = { x: a.x, y: up ? a.y + R + inset : a.y - R - inset };
+      p2 = { x: b.x, y: up ? b.y - R : b.y + R };
+      d = `M${fmt(p0.x)},${fmt(p0.y)} L${fmt(p2.x)},${fmt(p2.y)}`;
+    } else {
+      arc = arcRun({ ...a, x: a.x - inset }, b);
+      d = arc.d; p0 = arc.p0; p2 = arc.p2;
+    }
+
+    const g = sv('g', { role: 'presentation' }, 'fc-link');
+    sd(g, 'link', l.id);
+    sd(g, 'type', l.type);
     const hit = sv('path', { d, fill: 'none', 'stroke-width': HIT_W }, 'fc-hit');
     hit.setAttribute('aria-hidden', 'true');
     const line = sv('path', { d, fill: 'none' }, 'fc-line');
@@ -185,8 +225,8 @@
     g.append(hit, line);
 
     // An arrowhead marks a directed type; the pair itself stays undirected in the store.
-    if (t.directed && kind !== 'elbow' || (t.directed && kind === 'elbow')) {
-      const tip = arrowTip(d, a, b, kind, bus);
+    if (t.directed) {
+      const tip = arrowTip(d, p0, p2, kind, bus);
       if (tip) {
         const tri = sv('polygon', { points: `${fmt(tip.x)},${fmt(tip.y)} ${fmt(tip.x - tip.nx * ARROW - tip.tx * ARROW * 1.4)},${fmt(tip.y - tip.ny * ARROW - tip.ty * ARROW * 1.4)} ${fmt(tip.x - tip.nx * ARROW + tip.tx * ARROW * 1.4)},${fmt(tip.y - tip.ny * ARROW + tip.ty * ARROW * 1.4)}` }, 'fc-arrow');
         tri.style.setProperty('--rc', relColor(t));
@@ -195,13 +235,11 @@
       }
     }
 
-    const label = cap(t.name);
+    const label = cap(t.name).length > LABEL_MAX ? cap(t.name).slice(0, LABEL_MAX - 1) + '…' : cap(t.name);
     const lab = sv('g', {}, 'fc-lab');
     lab.setAttribute('aria-hidden', 'true');
-    const w = Math.max(46, label.length * 6.6 + 16);
-    const at = kind === 'elbow' ? pillAt(a, b, bus, 'elbow')
-      : kind === 'h' ? pillAt(a, b, 0, 'h', rows)
-        : pillAt(a, b, 0, 'arc');
+    const w = Math.max(46, Math.min(G.PILL_W, label.length * 6.6 + 16));
+    const at = pillAt(kind, a, b, bus, rows, arc || { p0, p2, ctrl: { x: (p0.x + p2.x) / 2, y: (p0.y + p2.y) / 2 } });
     const rect = sv('rect', { x: fmt(-w / 2), y: fmt(-G.PILL_H / 2), width: fmt(w), height: fmt(G.PILL_H), rx: fmt(G.PILL_H / 2) }, 'fc-lab-pill');
     const text = sv('text', { x: 0, y: 4, 'text-anchor': 'middle' }, 'fc-lab-text');
     text.textContent = label;
@@ -213,22 +251,22 @@
     hit.setAttribute('tabindex', '0');
     hit.setAttribute('role', 'button');
     hit.setAttribute('aria-label', `${cap(t.name)}: ${charName(l.from)} to ${charName(l.to)}`);
-    hit.dataset.link = l.id;
+    sd(hit, 'link', l.id);
     if (selLink === l.id) { g.classList.add('selected'); hit.setAttribute('aria-pressed', 'true'); }
     bindHit(hit, l.id);
     return { g, hit, line, lab, labW: w };
   }
 
   // The last point of a path, with the direction it arrives from (for the arrowhead).
-  function arrowTip(d, a, b, kind, bus) {
-    const nums = d.match(/-?\d+(\.\d+)?/g);
+  function arrowTip(d, p0, p2, kind, bus) {
+    const nums = d.match(/-?\d+(?:\.\d+)?/g);
     if (!nums || nums.length < 2) return null;
     const x = Number(nums[nums.length - 2]), y = Number(nums[nums.length - 1]);
     let tx, ty;
     if (kind === 'elbow') { tx = 0; ty = y > bus ? 1 : -1; }
-    else if (kind === 'h') { tx = x >= (a.x + b.x) / 2 ? 1 : -1; ty = 0; }
-    else if (kind === 'v') { tx = 0; ty = y > a.y ? 1 : -1; }
-    else { const len = Math.hypot(b.x - a.x, b.y - a.y) || 1; tx = (b.x - a.x) / len; ty = (b.y - a.y) / len; }
+    else if (kind === 'h') { tx = p2.x >= p0.x ? 1 : -1; ty = 0; }
+    else if (kind === 'v') { tx = 0; ty = p2.y >= p0.y ? 1 : -1; }
+    else { const len = Math.hypot(p2.x - p0.x, p2.y - p0.y) || 1; tx = (p2.x - p0.x) / len; ty = (p2.y - p0.y) / len; }
     return { x, y, tx, ty, nx: -ty, ny: tx };
   }
 
@@ -240,21 +278,25 @@
     if (!layer) { posCache = null; return; }
     paths.clear();
     if (!f) { layer.replaceChildren(); posCache = null; return; }
-    const nodesWithLinks = new Set();
-    for (const l of f.links) { nodesWithLinks.add(l.from); nodesWithLinks.add(l.to); }
 
-    // Shared buses: one per parent, high enough to clear the labels of its children.
+    // Shared buses: one per parent, kept clear of the labels of its children. Two parents whose
+    // children sit in the same band get buses BUS_GAP apart, so their elbows never merge.
     const bus = new Map();
+    const taken = [];
     for (const m of f.members) {
-      const kids = f.links.filter((l) => l.type === 'parent' && l.from === m.id).map((l) => posOf(l.to)).filter(Boolean).filter((p) => p.gen > m.gen);
+      const kids = f.links
+        .filter((l) => l.type === 'parent' && l.from === m.id)
+        .map((l) => posOf(l.to)).filter(Boolean).filter((p) => p.gen > m.gen);
       if (!kids.length) continue;
-      const mine = f.links.filter((l) => l.type === 'parent' && l.from === m.id).length;
       const py = posOf(m.id);
       if (!py) continue;
       const low = Math.max(...kids.map((k) => k.y));
       const want = low - R - G.PILL_GAP - G.PILL_H - 4;          // just above the tallest label
       const min = py.y + R + ELBOW_DY;
-      bus.set(m.id, Math.max(min, Math.min(want, (min + want) / 2 + (mine % 2 ? 0 : 0))));
+      let v = Math.max(min, Math.min(want, (min + want) / 2));
+      for (const t of taken) if (Math.abs(t - v) < BUS_GAP) v = t + BUS_GAP;
+      taken.push(v);
+      bus.set(m.id, v);
     }
     // Parallel horizontal links on one pair get their own row.
     const rows = new Map();
@@ -266,7 +308,7 @@
       const k = S.linkKey(l.from, l.to);
       if (!rows.has(k)) rows.set(k, nextRow++);
     }
-    const ctx = { bus, rows };
+    const ctx = { bus, rows, seen: new Map() };
 
     const frag = document.createDocumentFragment();
     for (const l of f.links) {
@@ -289,18 +331,23 @@
     if (host) host.classList.toggle('has-focus', !!focusType);
   }
 
-  // Only the labels change while a node is being dragged: cheap enough to run on every pointermove.
-  function refreshLabels() {
+  // A kind that vanishes (its last link removed, or its type deleted) must not leave the canvas dimmed
+  // with nothing lit. Called after every redraw, before the legend paints its buttons.
+  function validateFocus(silent) {
+    if (!focusType) return;
     const f = family();
-    if (!f) return;
-    for (const l of f.links) {
-      const o = paths.get(l.id);
-      if (!o) continue;
-      const a = posOf(l.from), b = posOf(l.to);
-      if (!a || !b) continue;
-      o.lab.setAttribute('transform', `translate(${fmt((a.x + b.x) / 2)} ${fmt((a.y + b.y) / 2 - 10)})`);
-    }
+    const still = !!(f && f.links.some((l) => l.type === focusType));
+    if (still) return;
+    const had = focusType;
+    focusType = '';
+    applyFocus();
+    renderLegend();
+    if (!silent) announce(`No ${cap(typeOf(had).name)} links left, so every kind is shown again.`);
   }
+
+  // Called on every pointermove of a node drag. Rebuilding the whole set is cheap for a tree (a few
+  // dozen lines) and keeps the paths, the buses and the labels honest instead of approximating them.
+  function refreshLive() { renderLinks(); }
 
   // ---- node labels that name the relations --------------------------------------------------------------------
   function relText(id) {
@@ -334,27 +381,28 @@
   }
 
   // ---- the legend -----------------------------------------------------------------------------------------------
+  // The toggle and the list live in the slot family-canvas.js put aside for them, so they share the
+  // stage's stacking order with the zoom bar and never sit under the lines.
   function buildHost() {
     if (host && host.isConnected) return;
+    const slot = fc.legendSlot || fc.liveEl;
+    if (!slot) return;                       // the canvas is not mounted yet; redraw will try again
     host = el('div', 'fc-legend-wrap');
     const toggle = btn('fc-legend-toggle', '', '');
     toggle.setAttribute('aria-expanded', 'false');
     toggle.append(icon('i-link'), el('span', 'fc-legend-name', 'Relationships'), el('span', 'fc-legend-count'), icon('i-chev'));
+    // The count only repeats what the list says; the accessible name carries it instead.
+    toggle.querySelector('.fc-legend-count').setAttribute('aria-hidden', 'true');
     const list = el('ul', 'fc-legend');
     list.hidden = true;
     toggle.addEventListener('click', () => setLegend(!legendOpen));
     host.append(toggle, list);
-    try { fc.liveEl?.append?.(host); } catch { /* ignore */ }
-    if (!host.isConnected) {
-      const stage = document.querySelector('.ft-canvas-live') || document.querySelector('.ft-canvas');
-      if (stage) stage.append(host);
-    }
+    slot.append(host);
   }
 
   function setLegend(open) {
     legendOpen = open;
     try { localStorage.setItem(keyOf(), open ? '1' : ''); } catch { /* view state only */ }
-    const toggle = host && $('.toggle', host);
     if (host) {
       const t = host.querySelector('.fc-legend-toggle');
       const list = host.querySelector('.fc-legend');
@@ -369,14 +417,17 @@
     if (!host) return;
     const list = host.querySelector('.fc-legend');
     const count = host.querySelector('.fc-legend-count');
+    const toggle = host.querySelector('.fc-legend-toggle');
     if (!list) return;
     const used = usedTypes();
     if (count) count.textContent = used.length ? String(used.length) : '';
+    if (toggle) toggle.setAttribute('aria-label', used.length ? `Relationships: ${used.length} kind${used.length > 1 ? 's' : ''}` : 'Relationships');
     list.replaceChildren(...used.map((u) => {
       const li = el('li', 'fc-leg-item');
       const b = btn('fc-leg-btn');
       b.dataset.type = u.t.id;
       b.setAttribute('aria-pressed', String(focusType === u.t.id));
+      b.setAttribute('aria-label', `${cap(u.t.name)}: ${u.n} link${u.n > 1 ? 's' : ''}. Show only this kind.`);
       const dot = el('i', 'fc-leg-dot');
       dot.setAttribute('aria-hidden', 'true');
       dot.style.setProperty('--rc', relColor(u.t));
@@ -404,6 +455,11 @@
     focusType = typeId || '';
     applyFocus();
     renderLegend();
+    // The kind being filtered may not exist in this tree at all (a menu can be opened on any type).
+    if (focusType) {
+      const f = family();
+      if (!f || !f.links.some((l) => l.type === focusType)) { focusType = ''; applyFocus(); renderLegend(); }
+    }
     announce(focusType ? `Showing only ${cap(typeOf(focusType).name)} links.` : 'Showing every kind of link.');
   }
 
@@ -560,17 +616,18 @@
     updateNodeLabels();
     buildHost();
     renderLegend();
-    if (focusType && !(S.data.relationTypes || []).some((t) => t.id === focusType)) setFocus('');
+    validateFocus(true);   // a filter whose kind disappeared is lifted without chatter
   }
 
   // Called while a node is being dragged: remember where it is, then move the labels.
   function redrawLive() {
     const n = fc.nodes && fc.nodes.querySelector('.fc-node.dragging');
-    if (n) {
+    const id = n && n.getAttribute('data-id');
+    if (id) {
       const m = n.getAttribute('transform').match(/translate\(([-\d.]+)[ ,]+([-\d.]+)\)/);
-      if (m) livePos.set(n.dataset.id, { x: Number(m[1]), y: Number(m[2]), gen: Number(n.dataset.gen) || 0 });
+      if (m) livePos.set(id, { id, x: Number(m[1]), y: Number(m[2]), gen: Number(n.getAttribute('data-gen')) || 0 });
     }
-    refreshLabels();
+    refreshLive();
   }
 
   function init() {

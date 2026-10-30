@@ -52,7 +52,7 @@
   const needFit = new Set();      // families that have not been fitted since they were first shown
   const thumbs = new Map();       // character id -> data URL ('' when none)
   let live = null, svg = null, world = null, bandsG = null, layer = null, nodesG = null;
-  let zoomLabel = null, emptyEl = null;
+  let zoomLabel = null, emptyEl = null, legendSlotEl = null;
   let spaceDown = false;
   let ro = null;
   const menuExtras = [];
@@ -123,7 +123,11 @@
       emw.menu(r.right - 190, Math.max(8, r.top - 8 - items.length * 32), items);
     });
 
-    live.append(svg, add, emptyEl, zoom, menu);
+    legendSlotEl = el('div', 'fc-legend-slot');
+    legendSlotEl.setAttribute('role', 'group');
+    legendSlotEl.setAttribute('aria-label', 'Relationship legend');
+
+    live.append(svg, add, emptyEl, zoom, menu, legendSlotEl);
     canvasEl().replaceChildren(live);
     bind();
     if (ro) ro.disconnect();
@@ -244,6 +248,9 @@
     const t = sv('text', { x: 0, y: R + 6 + PILL_H - 5, 'text-anchor': 'middle' }, 'fc-name');
     t.textContent = shown;
     const title = sv('title');
+    // Part 7j2: setNodeLabel only rewrites the aria-label, so a node's <title> must be rebuilt too or
+    // it would keep naming an old set of relations (or none at all).
+    title.dataset.title = '1';
     title.textContent = full;
     g.append(pill, t, title);
     return g;
@@ -256,6 +263,8 @@
     const n = nodesG.querySelector(`.fc-node[data-id="${id}"]`);
     if (!n || !text) return false;
     n.setAttribute('aria-label', text);
+    const ti = n.querySelector('title[data-title]');
+    if (ti) ti.textContent = text;
     return true;
   }
 
@@ -362,6 +371,14 @@
     svg.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       const node = e.target.closest('.fc-node');
+      if (gesture && gesture.kind === 'connect') {
+        // A connect started from the keyboard is still running: releasing it on the node under the
+        // pointer beats starting a second gesture out of the same click.
+        e.preventDefault();
+        const over = dropTarget(e);
+        if (over) finishConnect(over); else stopConnect(true);
+        return;
+      }
       if (node && String(e.target.dataset.handle || '') === node.dataset.id && !spaceDown) {
         // The handle is dragged to make a relationship, not to move the node.
         e.preventDefault();
@@ -646,6 +663,8 @@
     menuExtras,
     get layer() { return layer; },
     get nodes() { return nodesG; },
+    get liveEl() { return live; },
+    get legendSlot() { return legendSlotEl; },
     fit: () => fitView(),
     addCharacters: openPicker,
     setNodeLabel,

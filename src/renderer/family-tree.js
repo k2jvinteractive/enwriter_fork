@@ -209,11 +209,11 @@
     titleEl.textContent = f ? (f.name || 'Unnamed family') : '';
     canvasEl.dataset.family = f ? f.id : '';
     // Part 7j replaces this note with the canvas. Until then the stage says what is selected.
-    if (!canvasEl.querySelector('.ft-canvas-live')) {
+    if (!f || !canvasEl.querySelector('.ft-canvas-live')) {   // 7j1: the live canvas (family-canvas.js) stays while a family is selected
       const note = el('p', 'ft-note');
       note.setAttribute('role', 'status');
       note.textContent = f
-        ? `${f.name || 'Unnamed family'}: ${plural(f.members.length, 'member')}, ${plural(f.links.length, 'relationship')}. The canvas for drawing this tree is not available yet.`
+        ? `${f.name || 'Unnamed family'}: ${plural(f.members.length, 'member')}, ${plural(f.links.length, 'relationship')}. Loading the canvas…`
         : 'Add a family on the left to start a tree.';
       canvasEl.replaceChildren(note);
     }

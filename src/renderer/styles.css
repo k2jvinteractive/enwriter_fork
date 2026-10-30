@@ -68,6 +68,9 @@
   --aside-opacity: .8;            /* small captions under a label */
   --dim: .22;                     /* timeline cards that do not match the filter */
   --writer-ink: #e6e6e6;          /* where the ribbon's text colour picker starts */
+  --find-all: color-mix(in srgb, var(--accent) 30%, transparent);   /* every match in the find bar */
+  --find-current: var(--accent-edge);                                /* the current match: 3:1 or better against the page */
+  --find-current-ink: var(--accent-ink);
   color-scheme: dark;
 }
 
@@ -128,6 +131,9 @@ html[data-theme="light"] {
   --aside-opacity: 1;             /* muted at 80% falls under 4.5:1 on the light panels */
   --dim: .3;
   --writer-ink: #26241f;
+  --find-all: color-mix(in srgb, var(--accent-text) 24%, transparent);
+  --find-current: var(--accent-edge);
+  --find-current-ink: #ffffff;
   color-scheme: light;
 }
 
@@ -903,3 +909,28 @@ kbd { display: inline-flex; gap: 3px; font: 12px var(--sans); }
 .snap-n { flex: none; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
 /* A restore is running: the page cannot be used until the book has been read back. */
 body[inert] { cursor: progress; }
+
+/* ======================= v0.7g: find and replace ======================= */
+.find-bar { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 6px 10px; background: var(--surface-raised); border-bottom: 1px solid var(--border-menu); box-shadow: 0 2px 8px var(--shadow-menu); }
+.fd-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.fd-input { flex: 1 1 180px; min-width: 120px; height: 28px; padding: 0 8px; }
+.fd-count { min-width: 76px; color: var(--ink-soft); font: 12px var(--sans); font-variant-numeric: tabular-nums; }
+.fd-btn { display: grid; place-items: center; min-width: 28px; height: 26px; padding: 0 6px; border-radius: 4px; color: var(--ink); font: 12px var(--sans); }
+.fd-btn:hover { background: var(--hover); }
+.fd-btn[aria-pressed="true"] { background: var(--pressed); color: var(--accent-text); }
+.fd-expand .ic { transition: transform .12s; }
+.fd-expand.open .ic { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .fd-expand .ic { transition: none; } }
+.fd-scope { height: 26px; padding: 0 4px; }
+.fd-pad { flex: none; width: 28px; }
+.fd-act { height: 26px; padding: 0 10px; border: 1px solid var(--border); border-radius: 4px; color: var(--ink); font: 12px var(--sans); }
+.fd-act:hover { background: var(--hover); }
+.fd-groups { max-height: 132px; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+.fd-group { display: flex; justify-content: space-between; gap: 12px; padding: 3px 8px; border-radius: 4px; color: var(--ink-soft); font: 12px var(--sans); text-align: left; }
+.fd-group:hover { background: var(--hover); }
+.fd-group[aria-current="true"] { background: var(--surface-row-current); color: var(--ink); }
+.fd-gname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fd-gn { flex: none; font-variant-numeric: tabular-nums; }
+/* The matches are painted over the text with the Custom Highlight API; the text itself is never touched. */
+::highlight(find-all) { background-color: var(--find-all); color: inherit; }
+::highlight(find-current) { background-color: var(--find-current); color: var(--find-current-ink); }

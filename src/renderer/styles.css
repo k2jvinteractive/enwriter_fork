@@ -228,7 +228,10 @@ input, select, textarea {
 .editor {
   flex: 1 0 auto;
   padding: 44px max(40px, calc((100% - var(--page-w, 70ch)) / 2)) 40vh;
-  font: 18px/1.75 var(--serif);
+  /* Part 7f: the page font and size come from the book (typography.js); the Settings defaults apply when it has none. */
+  font-family: var(--page-font, var(--serif));
+  font-size: var(--page-size, 18px);
+  line-height: 1.75;
   white-space: pre-wrap;
   tab-size: 2em;
   outline: none;
@@ -237,7 +240,7 @@ input, select, textarea {
 }
 .editor ::selection, .editor::selection { background: var(--selection); }
 .editor p { margin: 0 0 .9em; }
-.editor h1, .editor h2, .editor h3 { font-family: var(--serif); line-height: 1.25; margin: 1.4em 0 .6em; }
+.editor h1, .editor h2, .editor h3 { font-family: var(--page-font, var(--serif)); line-height: 1.25; margin: 1.4em 0 .6em; }
 .editor h1 { font-size: 1.7em; }
 .editor h2 { font-size: 1.35em; }
 .editor h3 { font-size: 1.1em; }
@@ -610,7 +613,7 @@ select.lf-add { width: 100%; height: 28px; padding: 0 6px; color: var(--muted); 
 .center.chapter-mode #ribbon, .center.chapter-mode #page { display: none; }
 .chapter-view { flex: 1; min-height: 0; overflow-y: auto; background: var(--page); padding: 28px 32px 40px; }
 .cv-head { margin-bottom: 22px; }
-.cv-title { margin: 0; font: 600 24px/1.25 var(--serif); overflow-wrap: anywhere; }
+.cv-title { margin: 0; font: 600 24px/1.25 var(--page-font, var(--serif)); overflow-wrap: anywhere; }
 .cv-title.untitled { color: var(--muted); font-style: italic; }
 .cv-head .rename { font: 600 24px var(--serif); padding: 2px 6px; margin-left: -7px; }
 .cv-sub { margin: 4px 0 0; color: var(--muted); }
@@ -618,9 +621,9 @@ select.lf-add { width: 100%; height: 28px; padding: 0 6px; color: var(--muted); 
 .cv-card { position: relative; min-height: 132px; padding: 8px 10px 24px; background: var(--surface-card); border: 2px solid var(--c-d); border-radius: 4px; font: 12.5px/1.35 var(--serif); cursor: pointer; }
 .cv-card:hover { background: var(--hover); }
 .cv-card.dragging { opacity: .4; }
-.cv-card-title { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.cv-card-title { font-family: var(--page-font, var(--serif)); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .cv-card-title.untitled { color: var(--muted); font-style: italic; }
-.cv-card-desc { margin-top: 6px; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
+.cv-card-desc { font-family: var(--page-font, var(--serif)); margin-top: 6px; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
 .cv-tags { position: absolute; left: 8px; bottom: 5px; display: flex; gap: 3px; }
 .cv-meta-row { position: absolute; right: 6px; bottom: 3px; display: flex; align-items: center; gap: 5px; font: 10px var(--sans); color: var(--muted); }
 .cv-add { min-height: 132px; display: grid; place-items: center; background: transparent; border: 2px dotted var(--border-dotted); border-radius: 4px; color: var(--muted); font-size: 22px; position: relative; }

@@ -35,7 +35,7 @@
   let outlineToken = 0;
 
   // ---- wording --------------------------------------------------------------------------------
-  const REASONS = { 'before-restore': 'Before restore', 'before-replace-all': 'Before Replace All' };
+  const REASONS = { 'before-restore': 'Before restore', 'before-replace-all': 'Before Replace All', 'before-font-reset': 'Before font reset' };
   const reasonLabel = (r) => REASONS[r] || (r ? r.charAt(0).toUpperCase() + r.slice(1).replace(/-/g, ' ') : 'Automatic');
   const stamp = () => new Date().toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
   const when = (t) => new Date(t).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' });

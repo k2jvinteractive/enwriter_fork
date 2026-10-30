@@ -74,6 +74,15 @@
     data.title ??= 'Untitled Novel';
     // Part 7c: a book may carry its own spell check language. Anything unknown is dropped (the default applies).
     if (!(emw.SPELL_LANGUAGES || []).some((l) => l.id === data.spellLanguage)) delete data.spellLanguage;
+    // Part 7f: the page font and size for the whole book. Only validated when present, so books saved before
+    // this part are not rewritten just by being opened; empty values mean "use the defaults in Settings".
+    if (data.typography !== undefined) {
+      const t = data.typography && typeof data.typography === 'object' ? data.typography : {};
+      data.typography = {
+        font: typeof t.font === 'string' ? t.font.replace(/[\u0000-\u001f"\\;{}]/g, '').trim().slice(0, 100) : '',
+        size: Number.isInteger(t.size) && t.size >= 8 && t.size <= 96 ? t.size : null
+      };
+    }
     if (!Array.isArray(data.plotlines)) data.plotlines = [];
     if (!data.plotlines.length) data.plotlines.push({ id: uid(), name: 'Main Plot', color: '#e8caa4' });
     if (!Array.isArray(data.chapters)) data.chapters = [];
@@ -238,6 +247,15 @@
   const setSpellLanguage = (id) => commit('spell check language', () => {
     if (id) data.spellLanguage = id; else delete data.spellLanguage;
   });
+
+  // Part 7f: the book's page font and size (what the ribbon changes). '' and null mean the app defaults.
+  const typography = () => ({ font: (data.typography && data.typography.font) || '', size: (data.typography && data.typography.size) || null });
+  const setTypography = (patch, opts) => commit('page font', () => {
+    const now = typography();
+    const next = { font: 'font' in patch ? String(patch.font || '').replace(/[\u0000-\u001f"\\;{}]/g, '').trim().slice(0, 100) : now.font,
+      size: 'size' in patch ? (Number.isInteger(patch.size) && patch.size >= 8 && patch.size <= 96 ? patch.size : null) : now.size };
+    data.typography = next;
+  }, opts);
 
   // ---- chapters --------------------------------------------------------------
   const addChapter = (at = data.chapters.length, title = '') => commit('add chapter', () => {
@@ -706,7 +724,7 @@
     addPlotline, updatePlotline, deletePlotline, movePlotline,
     addEntity, updateEntity, setQuiet, deleteEntity, duplicateEntity,
     addCategory, renameCategory, deleteCategory, moveCategory,
-    setSpellLanguage,
+    setSpellLanguage, typography, setTypography,
     undo, redo, canUndo: () => undoStack.length > 0, canRedo: () => redoStack.length > 0
   };
 })();

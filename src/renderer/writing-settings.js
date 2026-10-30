@@ -36,8 +36,8 @@
     else if (key === 'smartQuotes' || key === 'autoEllipsis' || key === 'quoteStyle') applySmartText();
     else if (key === 'tabs' || key === 'statsSide') applyBar();
     // typewriter and autoHighlight are followed by editor.js and auto-highlight.js themselves;
-    // font, size and spacing are read when an empty page is made; the autosave delay is read
-    // each time app.js schedules a save.
+    // the default font and size are followed by typography.js (the book's own choice wins); spacing is read
+    // when an empty page is made; the autosave delay is read each time app.js schedules a save.
   });
 
   // ---- small controls -----------------------------------------------------------------------

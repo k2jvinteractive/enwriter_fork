@@ -8,14 +8,12 @@
   const page = $('#page');
   const ribbon = $('#ribbon');
   const blockSel = $('#rb-block');
-  const fontBtn = $('#rb-font');
   const sizeSel = $('#rb-size');
   const spacingSel = $('#rb-spacing');
   const colorIn = $('#rb-color');
   const hiliteIn = $('#rb-hilite');
 
   let savedRange = null;   // last selection inside the editor (survives focus moving to the ribbon)
-  let pendingSize = null;  // font size chosen while the caret was collapsed
   let rafId = 0;
 
   document.execCommand('defaultParagraphSeparator', false, 'p');
@@ -82,12 +80,10 @@
     const block = (document.queryCommandValue('formatBlock') || '').toLowerCase().replace(/[<>]/g, '');
     blockSel.value = BLOCK_VALUES.includes(block) ? block : 'p';
 
+    // The font and size controls show the page's font and size, not the caret's (typography.js, part 7f).
     const anchor = getSelection().anchorNode;
     const el = anchor && (anchor.nodeType === 1 ? anchor : anchor.parentElement);
     if (el) {
-      const cs = getComputedStyle(el);
-      sizeSel.value = String(Math.round(parseFloat(cs.fontSize)));
-      fontBtn.querySelector('.fp-label').textContent = cs.fontFamily.split(',')[0].replace(/["']/g, '').trim() || 'Font';
       const blk = el.closest(BLOCKS);
       const lh = blk && blk.style.lineHeight ? blk.style.lineHeight : '1.75';
       spacingSel.value = [...spacingSel.options].some((o) => o.value === lh) ? lh : '1.75';
@@ -116,8 +112,6 @@
   });
 
   blockSel.addEventListener('change', () => exec('formatBlock', `<${blockSel.value}>`));
-  emw.fontPicker(fontBtn, { onPick: (name) => exec('fontName', name) });
-  sizeSel.addEventListener('change', () => applyFontSize(Number(sizeSel.value)));
   spacingSel.addEventListener('change', () => {
     restore();
     selectedBlocks().forEach((b) => { b.style.lineHeight = spacingSel.value === '1.75' ? '' : spacingSel.value; });
@@ -129,27 +123,6 @@
     sw.style.setProperty('--c', input.value);
     input.addEventListener('input', () => sw.style.setProperty('--c', input.value));
     input.addEventListener('change', () => exec(cmd, input.value));
-  }
-
-  function applyFontSize(px) {
-    restore();
-    document.execCommand('styleWithCSS', false, true);
-    document.execCommand('fontSize', false, '7');   // marker size, replaced with the real one below
-    if (getSelection().isCollapsed) pendingSize = px;
-    fixFontSizes(px);
-    refreshState();
-  }
-
-  function fixFontSizes(px) {
-    editor.querySelectorAll('font[size="7"], span[style*="xxx-large"]').forEach((el) => {
-      if (el.tagName === 'FONT') {
-        const span = document.createElement('span');
-        while (el.firstChild) span.appendChild(el.firstChild);
-        el.replaceWith(span);
-        el = span;
-      }
-      el.style.fontSize = px + 'px';
-    });
   }
 
   function clearFormatting() {
@@ -177,7 +150,6 @@
   };
 
   editor.addEventListener('input', (e) => {
-    if (pendingSize) { fixFontSizes(pendingSize); pendingSize = null; }
     updateEmpty();
     if (e.inputType === 'insertText' && e.data === '-') dashToEmDash();
     // Every input event goes in: smartText also uses them to end its "Backspace reverts" window.
@@ -292,20 +264,14 @@
   emw.actions.redo = () => { editor.focus(); document.execCommand('redo'); };
   emw.actions.selectAll = () => { editor.focus(); document.execCommand('selectAll'); };
 
-  // An empty page starts with the writer's default font, size and spacing (Settings > Writing).
-  // They go on the first paragraph only, so text that already exists is never restyled, and a
-  // later change to the defaults affects new text only. With the stock defaults nothing is added.
+  // An empty page starts with the writer's default line spacing (Settings > Writing). It goes on the first
+  // paragraph only, so text that already exists is never restyled. Font and size are no longer written into
+  // text at all: the page font and size come from CSS (typography.js, part 7f).
   function blankHtml() {
     const S = emw.settings;
     const p = document.createElement('p');
-    if (S) {
-      const font = String(S.get('writingFont') || '').replace(/["\\;{}]/g, '');
-      const size = S.get('writingSize');
-      const lh = S.get('writingSpacing');
-      if (font) p.style.fontFamily = `"${font}", serif`;
-      if (size && size !== 18) p.style.fontSize = size + 'px';
-      if (lh && lh !== 1.75) p.style.lineHeight = String(lh);
-    }
+    const lh = S && S.get('writingSpacing');
+    if (lh && lh !== 1.75) p.style.lineHeight = String(lh);
     p.append(document.createElement('br'));
     return p.outerHTML;
   }
@@ -323,7 +289,6 @@
       editor.innerHTML = html || blankHtml();
       editor.contentEditable = 'true';
       savedRange = null;
-      pendingSize = null;
       page.scrollTop = 0;
       updateEmpty();
     }

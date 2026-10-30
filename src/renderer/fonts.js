@@ -43,7 +43,9 @@
   emw.fonts = { list };
 
   // Turns a button into a font picker. `onPick(name)` runs when a font is chosen.
-  emw.fontPicker = (btn, { onPick }) => {
+  // `onPreview(name)` (optional) runs while the writer browses the list, and `onPreview(null)` when the list closes
+  // without a choice, so the caller can show the font cheaply and put the old one back.
+  emw.fontPicker = (btn, { onPick, onPreview }) => {
     const wrap = btn.parentElement;
     const pop = document.createElement('div');
     pop.className = 'fp-pop';
@@ -62,10 +64,13 @@
     let names = [];
     let shown = [];
     let active = 0;
+    let touched = false;   // the keyboard moved through the list, so the active row is the one being previewed
+    const preview = (name) => { if (onPreview) onPreview(name); };
 
     function paint() {
       [...ul.children].forEach((li, i) => li.setAttribute('aria-selected', String(i === active)));
       ul.children[active]?.scrollIntoView({ block: 'nearest' });
+      if (touched && shown[active]) preview(shown[active]);
     }
     function render() {
       const q = search.value.trim().toLowerCase();
@@ -82,26 +87,36 @@
       active = 0;
       paint();
     }
-    function close() { pop.hidden = true; }
+    // A close without a choice puts the previewed font back.
+    function close(chosen = false) {
+      if (pop.hidden) return;
+      pop.hidden = true;
+      touched = false;
+      if (!chosen) preview(null);
+    }
     async function open() {
       pop.hidden = false;
       ul.textContent = 'Loading fonts…';
       search.value = '';
+      touched = false;
       search.focus();
       names = await list();   // the first call happens inside the click, which is what lets the browser read system fonts
       render();
     }
-    function pick(name) { close(); onPick(name); }
+    function pick(name) { close(true); onPick(name); }
 
     btn.addEventListener('click', () => (pop.hidden ? open() : close()));
-    search.addEventListener('input', render);
+    search.addEventListener('input', () => { touched = false; preview(null); render(); });
     search.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowDown') { e.preventDefault(); active = Math.min(shown.length - 1, active + 1); paint(); }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); active = Math.max(0, active - 1); paint(); }
+      if (e.key === 'ArrowDown') { e.preventDefault(); touched = true; active = Math.min(shown.length - 1, active + 1); paint(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); touched = true; active = Math.max(0, active - 1); paint(); }
       else if (e.key === 'Enter') { e.preventDefault(); if (shown[active]) pick(shown[active]); }
       else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
     });
     ul.addEventListener('mousedown', (e) => e.preventDefault());
+    // The pointer previews too; leaving the list goes back to the keyboard's row, or to the old font.
+    ul.addEventListener('mouseover', (e) => { const li = e.target.closest('li[data-font]'); if (li) preview(li.dataset.font); });
+    ul.addEventListener('mouseleave', () => preview(touched && shown[active] ? shown[active] : null));
     ul.addEventListener('click', (e) => { const li = e.target.closest('li[data-font]'); if (li) pick(li.dataset.font); });
     document.addEventListener('mousedown', (e) => { if (!pop.hidden && !wrap.contains(e.target)) close(); });
   };

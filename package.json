@@ -1,7 +1,7 @@
 {
   "name": "enWriter",
   "productName": "enWriter",
-  "version": "0.7.8",
+  "version": "0.7.9",
   "description": "enWriter",
   "main": "src/main.js",
   "author": "Stixhi Stishi <kineticstishi19@gmail.com>",

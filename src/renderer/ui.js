@@ -168,6 +168,7 @@
       ['Manuscript', '', 'goManuscript'],
       ['Timeline', '', 'goTimeline'],
       ['Characters', '', 'goCharacters'],
+      ['Family trees', '', 'openFamilyTrees'],
       ['Places', '', 'goPlaces'],
       ['Darlings', '', 'goDarlings'],
       ['Notes', '', 'goNotes'],

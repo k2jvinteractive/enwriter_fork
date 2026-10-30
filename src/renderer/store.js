@@ -63,6 +63,20 @@
     id: uid(), title, plotline, words: 0, description: '',
     characters: [], places: [], tags: [], noteIds: [], color: '', status: 'idea'
   });
+  // Part 7i: relationship types. The built-ins have fixed ids so links can always find them; their
+  // names and direction are fixed too (only the colour can change). `color: ''` means "use the theme's
+  // --rel-<id> token"; a hex means the writer chose it. 'related' is where links go when their type is deleted.
+  const REL_BUILTIN = [
+    { id: 'parent', name: 'parent', inverse: 'child', directed: true },
+    { id: 'sibling', name: 'sibling', inverse: 'sibling', directed: false },
+    { id: 'spouse', name: 'spouse', inverse: 'partner', directed: false },
+    { id: 'related', name: 'related', inverse: 'related', directed: false }
+  ];
+  const REL_NEUTRAL = 'related';
+  const HEX = /^#[0-9a-f]{6}$/i;
+  const cleanHex = (v) => (typeof v === 'string' && HEX.test(v) ? v.toLowerCase() : '');
+  const cleanName = (v, max = 120) => String(v == null ? '' : v).replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, max);
+
   const entityDefaults = {
     characters: () => ({ name: '', aliases: [], short: '', tags: [], attributes: [], hasThumb: false, category: '' }),
     places: () => ({ name: '', aliases: [], short: '', tags: [], attributes: [], hasThumb: false, category: '' }),
@@ -143,6 +157,52 @@
         return s;
       });
     }
+    normalizeFamilies();
+  }
+
+  // Part 7i. Additive: a book saved before families gains empty arrays and the built-in types.
+  // Anything that points at a character, a type or a family member that is not there is dropped,
+  // so the family views never meet a dangling id.
+  function normalizeFamilies() {
+    const given = Array.isArray(data.relationTypes) ? data.relationTypes : [];
+    const types = REL_BUILTIN.map((b) => {
+      const saved = given.find((t) => t && t.id === b.id);
+      return { ...b, color: cleanHex(saved && saved.color), builtin: true };
+    });
+    const seen = new Set(types.map((t) => t.id));
+    for (const t of given) {
+      if (!t || typeof t.id !== 'string' || !t.id || seen.has(t.id) || !cleanName(t.name, 60)) continue;
+      seen.add(t.id);
+      types.push({ id: t.id, name: cleanName(t.name, 60), inverse: cleanName(t.inverse, 60), color: cleanHex(t.color), directed: !!t.directed, builtin: false });
+    }
+    data.relationTypes = types;
+
+    const chars = new Set(data.characters.map((c) => c.id));
+    const used = [];
+    const famIds = new Set();
+    data.families = (Array.isArray(data.families) ? data.families : []).filter((f) => {
+      if (!f || typeof f.id !== 'string' || !f.id || famIds.has(f.id)) return false;
+      famIds.add(f.id);
+      return true;
+    }).map((f) => {
+      const inFam = new Set();
+      const members = [];
+      for (const m of Array.isArray(f.members) ? f.members : []) {
+        if (!m || !chars.has(m.id) || inFam.has(m.id)) continue;
+        inFam.add(m.id);
+        members.push({ id: m.id, x: Number.isFinite(m.x) ? m.x : 0, gen: Number.isInteger(m.gen) ? m.gen : 0 });
+      }
+      const linkIds = new Set();
+      const links = [];
+      for (const l of Array.isArray(f.links) ? f.links : []) {
+        if (!l || typeof l.id !== 'string' || linkIds.has(l.id) || l.from === l.to || !inFam.has(l.from) || !inFam.has(l.to)) continue;
+        linkIds.add(l.id);
+        links.push({ id: l.id, from: l.from, to: l.to, type: seen.has(l.type) ? l.type : REL_NEUTRAL });
+      }
+      const color = cleanHex(f.color) || randomColor(used);
+      used.push(color);
+      return { id: f.id, name: cleanName(f.name), color, hasImage: !!f.hasImage, members, links };
+    });
   }
 
   // Saves from before chapters became folders (schema < 2) may hold text in the chapter itself.
@@ -396,7 +456,98 @@
     const f = SCENE_FIELD[kind];
     for (const ch of data.chapters) for (const s of ch.scenes) s[f] = s[f].filter((x) => x !== id);
     if (kind === 'tags') for (const k of ['characters', 'places', 'notes']) for (const e of data[k]) e.tags = e.tags.filter((x) => x !== id);
+    if (kind === 'characters') pullFromFamilies(id);   // part 7i: a character that is gone is in no family
     return true;
+  });
+
+  // ---- families and relationship types (part 7i) ---------------------------------------------
+  const findFamily = (id) => data.families.find((f) => f.id === id) || null;
+  const relType = (id) => data.relationTypes.find((t) => t.id === id) || null;
+
+  // Takes a character out of every family (members and the links that touch them) and returns what was
+  // removed, so a restore from Darlings can put each piece back where it was.
+  function pullFromFamilies(characterId) {
+    const out = [];
+    for (const fam of data.families) {
+      const mi = fam.members.findIndex((m) => m.id === characterId);
+      if (mi < 0) continue;
+      const links = [];
+      fam.links.forEach((l, index) => { if (l.from === characterId || l.to === characterId) links.push({ link: clone(l), index }); });
+      const [member] = fam.members.splice(mi, 1);
+      fam.links = fam.links.filter((l) => l.from !== characterId && l.to !== characterId);
+      out.push({ familyId: fam.id, member: clone(member), index: mi, links });
+    }
+    return out;
+  }
+
+  const addFamily = (name = '') => commit('add family', () => {
+    const f = {
+      id: uid(), name: cleanName(name) || `Family ${data.families.length + 1}`,
+      color: randomColor(data.families.map((x) => x.color)), hasImage: false, members: [], links: []
+    };
+    data.families.push(f);
+    return f.id;
+  });
+  const renameFamily = (id, name) => commit('rename family', () => {
+    const f = findFamily(id);
+    const n = cleanName(name);
+    if (f && n) f.name = n;
+  });
+  // Colours coalesce so dragging the picker is one undo step.
+  const setFamilyColor = (id, color, opts = { coalesce: `fam-color:${id}` }) => commit('recolour family', () => {
+    const f = findFamily(id);
+    const c = cleanHex(color);
+    if (f && c) f.color = c;
+  }, opts);
+  // The picture itself is a file (thumb-fam-<id>) written by the caller first; this only flags it.
+  const setFamilyImage = (id) => commit('add family image', () => { const f = findFamily(id); if (f) f.hasImage = true; });
+  const removeFamilyImage = (id) => commit('remove family image', () => { const f = findFamily(id); if (f) f.hasImage = false; });
+  // Deleting a family sends it to Darlings (the body of the work is never lost). Returns the darling id.
+  const deleteFamily = (id, opts) => sendToDarlings('family', id, opts);
+  const reorderFamilies = (id, at) => commit('reorder families', () => {
+    const from = data.families.findIndex((f) => f.id === id);
+    if (from < 0) return;
+    const [f] = data.families.splice(from, 1);
+    let pos = Number(at);
+    if (from < pos) pos--;
+    data.families.splice(clamp(pos, data.families.length), 0, f);
+  });
+
+  const suggestRelationColor = () => randomColor(data.relationTypes.map((t) => t.color).filter(Boolean));
+  const addRelationType = ({ name, inverse = '', color = '', directed = false } = {}) => commit('add relationship type', () => {
+    const n = cleanName(name, 60);
+    if (!n) return null;
+    const t = { id: uid(), name: n, inverse: cleanName(inverse, 60), color: cleanHex(color) || suggestRelationColor(), directed: !!directed, builtin: false };
+    data.relationTypes.push(t);
+    return t.id;
+  });
+  // Built-in types accept a colour only (and '' to go back to the theme's own). Custom types accept everything.
+  const updateRelationType = (id, patch = {}, opts) => {
+    const colourOnly = Object.keys(patch).length === 1 && 'color' in patch;
+    // Colour changes coalesce by default, like the family colour, so a drag is one undo step.
+    const o = opts || (colourOnly ? { coalesce: `rel-color:${id}` } : undefined);
+    return commit(colourOnly ? 'recolour relationship type' : 'edit relationship type', () => {
+      const t = relType(id);
+      if (!t) return;
+      if ('color' in patch) {
+        const c = cleanHex(patch.color);
+        if (c || (t.builtin && !patch.color)) t.color = c;
+      }
+      if (t.builtin) return;
+      if ('name' in patch && cleanName(patch.name, 60)) t.name = cleanName(patch.name, 60);
+      if ('inverse' in patch) t.inverse = cleanName(patch.inverse, 60);
+      if ('directed' in patch) t.directed = !!patch.directed;
+    }, o);
+  };
+  // Links of the deleted type are kept and re-pointed to "related", in the same undo step.
+  // Returns how many links moved, or false when the type is built in or missing.
+  const deleteRelationType = (id) => commit('delete relationship type', () => {
+    const t = relType(id);
+    if (!t || t.builtin) return false;
+    let moved = 0;
+    for (const f of data.families) for (const l of f.links) if (l.type === id) { l.type = REL_NEUTRAL; moved++; }
+    data.relationTypes.splice(data.relationTypes.indexOf(t), 1);
+    return moved;
   });
 
   const duplicateEntity = (kind, id) => commit(`duplicate ${KIND_ONE[kind]}`, () => {
@@ -483,7 +634,7 @@
   }
   const darlingCount = (origin) => darlingsFor({ origin }).length;
 
-  // kind: text | scene | chapter | plotline | character | place | note | tag | category.
+  // kind: text | scene | chapter | plotline | character | place | note | tag | category | family.
   // For `text`, id is the source scene and opts carries { id, preview, offset, anchor, block }.
   // For `category`, opts.entityKind says which list it belongs to. Returns the darling id, or null
   // when the item is missing or cannot leave (the last chapter and the last plotline stay).
@@ -569,10 +720,23 @@
         data[entKind].splice(i, 1);
         for (const ch of data.chapters) for (const s of ch.scenes) s[field] = s[field].filter((x) => x !== id);
         if (entKind === 'tags') for (const k of ['characters', 'places', 'notes']) for (const x of data[k]) x.tags = x.tags.filter((t) => t !== id);
+        // Part 7i: a character leaves every family with it; the memberships ride along so restore can undo that.
+        const families = entKind === 'characters' ? pullFromFamilies(id) : [];
         return place(make({
           kind, label: e.name || `Unnamed ${kind}`, origin: opts.origin || entKind, preview: String(e.short || e.preview || '').slice(0, 200),
-          restore: { entityKind: entKind, index: i, categoryId: e.category, categoryName: cat ? cat.name : '', sceneIds, holders },
+          restore: { entityKind: entKind, index: i, categoryId: e.category, categoryName: cat ? cat.name : '', sceneIds, holders, families },
           payload: { entity: clone(e) }
+        }));
+      }
+      if (kind === 'family') {
+        const i = data.families.findIndex((f) => f.id === id);
+        if (i < 0) return null;
+        const [fam] = data.families.splice(i, 1);
+        const n = fam.members.length;
+        return place(make({
+          kind, label: fam.name || 'Unnamed family', origin: opts.origin || 'characters',
+          preview: `${n} member${n === 1 ? '' : 's'}, ${fam.links.length} relationship${fam.links.length === 1 ? '' : 's'}`,
+          restore: { index: i }, payload: { family: clone(fam) }   // its picture stays in the file thumb-fam-<id>
         }));
       }
       if (kind === 'category') {
@@ -665,7 +829,35 @@
         }
         const lost = (r.sceneIds || []).length - relinked;
         if (lost > 0) notes.push(`${lost} scene${lost === 1 ? '' : 's'} it was attached to no longer exist${lost === 1 ? 's' : ''}`);
+        if (k === 'characters') {
+          // Part 7i: back into each family, at the same place, with the relationships it had.
+          let noFamily = 0;
+          let noLink = 0;
+          for (const m of r.families || []) {
+            const fam = findFamily(m.familyId);
+            if (!fam) { noFamily++; continue; }
+            if (!fam.members.some((x) => x.id === e.id)) fam.members.splice(clamp(m.index, fam.members.length), 0, clone(m.member));
+            for (const { link, index } of m.links || []) {
+              const other = link.from === e.id ? link.to : link.from;
+              if (!fam.members.some((x) => x.id === other) || fam.links.some((x) => x.id === link.id)) { noLink++; continue; }
+              fam.links.splice(clamp(index, fam.links.length), 0, { ...clone(link), type: relType(link.type) ? link.type : REL_NEUTRAL });
+            }
+          }
+          if (noFamily) notes.push(`${noFamily} family tree${noFamily === 1 ? '' : 's'} it belonged to no longer exist${noFamily === 1 ? 's' : ''}`);
+          if (noLink) notes.push(`${noLink} relationship${noLink === 1 ? '' : 's'} could not come back because the other person is gone`);
+        }
         show = { kind: rec.kind, id: e.id };
+      } else if (rec.kind === 'family') {
+        const fam = clone(p.family);
+        if (findFamily(fam.id)) return taken('this family');
+        const before = fam.members.length;
+        fam.members = fam.members.filter((m) => entity('characters', m.id));
+        const ids = new Set(fam.members.map((m) => m.id));
+        fam.links = fam.links.filter((l) => ids.has(l.from) && ids.has(l.to)).map((l) => (relType(l.type) ? l : { ...l, type: REL_NEUTRAL }));
+        const gone = before - fam.members.length;
+        if (gone) notes.push(`${gone} character${gone === 1 ? ' that is' : 's that are'} no longer in the book left the tree`);
+        data.families.splice(clamp(r.index, data.families.length), 0, fam);
+        show = { kind: 'family', id: fam.id };
       } else if (rec.kind === 'category') {
         const k = r.entityKind;
         const list = data.categories[k];
@@ -724,6 +916,10 @@
     addPlotline, updatePlotline, deletePlotline, movePlotline,
     addEntity, updateEntity, setQuiet, deleteEntity, duplicateEntity,
     addCategory, renameCategory, deleteCategory, moveCategory,
+    // part 7i
+    REL_NEUTRAL, family: findFamily, relType, suggestRelationColor,
+    addFamily, renameFamily, setFamilyColor, setFamilyImage, removeFamilyImage, deleteFamily, reorderFamilies,
+    addRelationType, updateRelationType, deleteRelationType,
     setSpellLanguage, typography, setTypography,
     undo, redo, canUndo: () => undoStack.length > 0, canRedo: () => redoStack.length > 0
   };

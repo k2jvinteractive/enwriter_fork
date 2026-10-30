@@ -10,7 +10,7 @@
   const editorEl = $('#editor');
 
   const ORIGIN_LABEL = { manuscript: 'Manuscript', timeline: 'Timeline', characters: 'Characters', places: 'Places', notes: 'Notes', tags: 'Tags' };
-  const KIND_LABEL = { text: 'Text', scene: 'Scene', chapter: 'Chapter', plotline: 'Plotline', character: 'Character', place: 'Place', note: 'Note', tag: 'Tag', category: 'Category' };
+  const KIND_LABEL = { text: 'Text', scene: 'Scene', chapter: 'Chapter', plotline: 'Plotline', character: 'Character', place: 'Place', note: 'Note', tag: 'Tag', category: 'Category', family: 'Family' };
   const BLOCKY = /<(p|h[1-6]|blockquote|ul|ol|li|hr)[\s>/]/i;
 
   const el = (tag, cls, text) => {
@@ -60,6 +60,7 @@
     if (target.kind === 'scene' || target.kind === 'chapter') emw.actions.openScene(target.id);   // openDoc handles both
     else if (target.kind === 'plotline') emw.showView('timeline');
     else if (target.kind === 'category') emw.showView(target.entityKind);
+    else if (target.kind === 'family') emw.familyTree.open(target.id);
     else emw.openEntity(S.ENTITY_KIND[target.kind], target.id);
   }
 
@@ -387,6 +388,10 @@
     } else if (v === 'timeline') {
       const card = ae && ae.closest ? ae.closest('.card') : null;
       if (card) return send('scene', card.dataset.id, { origin: 'timeline' });
+    } else if (v === 'characters' && emw.familyTree && emw.familyTree.active()) {
+      // Part 7i: in the family-tree mode the character list is hidden, so the thing in front of the writer is the family.
+      const id = emw.familyTree.selected();
+      if (id) return send('family', id, { origin: 'characters' });
     } else if (S.KINDS.includes(v)) {
       const li = $(`#view-${v} .ev-item[aria-current="true"]`);
       if (li) return send(S.KIND_ONE[v], li.dataset.id, { origin: v });
@@ -416,6 +421,7 @@
     if (d.kind === 'text') return 'var(--accent)';
     if (d.kind === 'plotline') return p.plotline.color;
     if (d.kind === 'tag') return p.entity.color || 'var(--muted)';
+    if (d.kind === 'family') return p.family.color || 'var(--muted)';
     if (d.kind === 'scene') return p.scene.color || S.find.plotline(p.scene.plotline)?.color || 'var(--muted)';
     return 'var(--muted)';
   }
@@ -540,6 +546,12 @@
       if ((e.aliases || []).length) body.append(el('p', 'dl-desc', 'Also known as ' + e.aliases.join(', ')));
       addList(body, 'Attributes', (e.attributes || []).filter((a) => a.k || a.v).map((a) => `${a.k}: ${a.v}`));
       html = await read(e.id);
+    } else if (d.kind === 'family') {
+      const f = p.family;
+      const name = (id) => S.entity('characters', id)?.name || 'Unnamed character';
+      addList(body, plural(f.members.length, 'member'), f.members.map((m) => name(m.id)));
+      const rel = (l) => `${name(l.from)} · ${(S.relType(l.type)?.name) || 'related'} · ${name(l.to)}`;
+      addList(body, plural(f.links.length, 'relationship'), f.links.map(rel));
     } else if (d.kind === 'category') {
       const names = (d.restore.entityIds || []).map((id) => S.entity(d.restore.entityKind, id)?.name).filter(Boolean);
       addList(body, `${ORIGIN_LABEL[d.restore.entityKind]} that were in it`, names);
